@@ -112,6 +112,12 @@ const decisionDataQualityLabels = {
   unknown: "LEGACY / UNKNOWN",
 } as const;
 
+const sourceQualityImpactStatusLabels = {
+  collecting: "COLLECTING",
+  monitoring: "MONITORING",
+  "performance-alert": "PERFORMANCE ALERT",
+} as const;
+
 function DataSourceQualityBoard({
   quality,
   history,
@@ -957,6 +963,31 @@ function PerformanceLens({ journal }: { journal: PaperJournalSnapshot }) {
         </div>
       </section>
 
+      <section className="source-quality-impact" aria-label="取得元別の品質影響分析">
+        <div className="performance-card-heading">
+          <div><span>SOURCE IMPACT</span><strong>欠損時と正常時の成績差</strong></div>
+          <small>30D · MIN 10 + 10 · RESEARCH ONLY</small>
+        </div>
+        <div className="source-quality-impact-grid">
+          {journal.sourceQualityImpact.map((impact) => (
+            <article key={impact.source} className={`source-impact-${impact.status}`}>
+              <div>
+                <span>{dataSourceLabels[impact.source]}</span>
+                <small>{sourceQualityImpactStatusLabels[impact.status]}</small>
+              </div>
+              <strong className={impact.status === "performance-alert" ? "negative" : ""}>
+                {impact.cleanCount && impact.impairedCount ? signedPercent(impact.returnGapPercentagePoints) : "—"}
+              </strong>
+              <small>RETURN GAP · IMPAIRED − CLEAN</small>
+              <dl>
+                <div><dt>CLEAN</dt><dd>{impact.cleanCount}/{impact.minimumSamples} · {impact.cleanCount ? signedPercent(impact.cleanAverageNetReturnPercent) : "—"}</dd></div>
+                <div><dt>IMPAIRED</dt><dd>{impact.impairedCount}/{impact.minimumSamples} · {impact.impairedCount ? signedPercent(impact.impairedAverageNetReturnPercent) : "—"}</dd></div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <div className="performance-detail-grid">
         <PerformanceCurve journal={journal} />
         <article className="asset-performance-card">
@@ -1543,7 +1574,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.22</span>
+          <span>SUMI TRADE LAB / BUILD 1.23</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

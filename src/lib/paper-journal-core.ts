@@ -16,6 +16,7 @@ import type {
   PaperScanRecord,
   PaperSignalModel,
   PaperSignalObservation,
+  PaperSourceQualityImpact,
   PaperTradeOutcome,
   PortfolioSnapshot,
   StrategyPlan,
@@ -51,6 +52,7 @@ const MINIMUM_REGIME_SAMPLES = 10 as const;
 const REGIME_ALERT_AVERAGE_RETURN_PERCENT = -1 as const;
 const REGIME_ALERT_PROFIT_FACTOR = 0.8 as const;
 const MINIMUM_DATA_QUALITY_SAMPLES = 10 as const;
+const DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS = -1 as const;
 const DATA_SOURCE_IDS: DataSourceId[] = [
   "blockscout",
   "dexscreener",
@@ -419,6 +421,60 @@ export function calculateDataQualityPerformance(
           ) / scoped.length,
         )
         : 0,
+    };
+  });
+}
+
+export function calculateSourceQualityImpact(
+  outcomes: PaperTradeOutcome[],
+): PaperSourceQualityImpact[] {
+  const evidenced = outcomes.filter((outcome) => outcome.entryDataQuality);
+
+  return DATA_SOURCE_IDS.map((source) => {
+    const impaired = evidenced.filter((outcome) =>
+      outcome.entryDataQuality?.degradedSources.includes(source) ||
+      outcome.entryDataQuality?.unavailableSources.includes(source),
+    );
+    const clean = evidenced.filter((outcome) =>
+      !outcome.entryDataQuality?.degradedSources.includes(source) &&
+      !outcome.entryDataQuality?.unavailableSources.includes(source),
+    );
+    const averageReturn = (scoped: PaperTradeOutcome[]) => scoped.length
+      ? round(
+        scoped.reduce(
+          (total, outcome) => total + outcome.netReturnPercent,
+          0,
+        ) / scoped.length,
+      )
+      : 0;
+    const cleanAverageNetReturnPercent = averageReturn(clean);
+    const impairedAverageNetReturnPercent = averageReturn(impaired);
+    const impairedNetPnlUsd = round(
+      impaired.reduce((total, outcome) => total + outcome.netPnlUsd, 0),
+    );
+    const enoughSamples =
+      clean.length >= MINIMUM_DATA_QUALITY_SAMPLES &&
+      impaired.length >= MINIMUM_DATA_QUALITY_SAMPLES;
+    const returnGapPercentagePoints = round(
+      impairedAverageNetReturnPercent - cleanAverageNetReturnPercent,
+    );
+    const status = !enoughSamples
+      ? "collecting"
+      : impairedNetPnlUsd < 0 &&
+          returnGapPercentagePoints <= DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS
+        ? "performance-alert"
+        : "monitoring";
+
+    return {
+      source,
+      status,
+      minimumSamples: MINIMUM_DATA_QUALITY_SAMPLES,
+      cleanCount: clean.length,
+      impairedCount: impaired.length,
+      cleanAverageNetReturnPercent,
+      impairedAverageNetReturnPercent,
+      returnGapPercentagePoints,
+      impairedNetPnlUsd,
     };
   });
 }
@@ -1023,6 +1079,7 @@ export function emptyPaperJournal(
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
     dataSourceIncidents24h: calculateDataSourceIncidents([]),
     dataQualityPerformance: calculateDataQualityPerformance([]),
+    sourceQualityImpact: calculateSourceQualityImpact([]),
     recentOutcomes: [],
     message,
   };
@@ -1185,6 +1242,7 @@ export function evaluatePaperJournal(
     dataQualityPerformance: calculateDataQualityPerformance(
       analyticsOutcomes,
     ),
+    sourceQualityImpact: calculateSourceQualityImpact(analyticsOutcomes),
     recentOutcomes: outcomes
       .filter((outcome) => signalModel(outcome) === "chart")
       .toReversed()

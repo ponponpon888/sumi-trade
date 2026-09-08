@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { compareStrategies } from "@/lib/chart-model";
 import {
   calculateOperationalReadiness,
+  calculateSourceQualityImpact,
   collectPaperTradeOutcomes,
   createPaperScanRecord,
   evaluatePaperJournal,
@@ -15,6 +16,7 @@ import type {
   PaperQualification,
   PortfolioSnapshot,
   StrategyPlan,
+  PaperTradeOutcome,
 } from "@/lib/types";
 
 const WALLET = "0x0000000000000000000000000000000000000001";
@@ -253,6 +255,39 @@ function recordAt(
   const now = Date.UTC(2026, 8, 7, hours);
   const record = createPaperScanRecord(data(price, direction ?? "BUY"), now);
   return direction ? record : { ...record, signals: [] };
+}
+
+function qualityOutcome(
+  index: number,
+  netReturnPercent: number,
+  geckoImpaired: boolean,
+): PaperTradeOutcome {
+  return {
+    decisionId: `quality-${index}`,
+    model: "chart",
+    priceKey: "TEST",
+    symbol: "TEST",
+    direction: "BUY",
+    entryPriceUsd: 100,
+    modelScore: 70,
+    confidence: 70,
+    notionalUsd: 100,
+    estimatedCostUsd: 1,
+    costGatePassed: true,
+    signalTime: new Date(Date.UTC(2026, 8, 7, index)).toISOString(),
+    outcomeTime: new Date(Date.UTC(2026, 8, 7, index + 6)).toISOString(),
+    exitPriceUsd: 100 + netReturnPercent,
+    grossReturnPercent: netReturnPercent + 1,
+    netReturnPercent,
+    netPnlUsd: netReturnPercent,
+    won: netReturnPercent > 0,
+    entryDataQuality: {
+      status: geckoImpaired ? "unavailable" : "complete",
+      averageCoveragePercent: geckoImpaired ? 80 : 100,
+      degradedSources: [],
+      unavailableSources: geckoImpaired ? ["geckoterminal"] : [],
+    },
+  };
 }
 
 describe("paper journal", () => {
@@ -617,6 +652,36 @@ describe("paper journal", () => {
     expect(result.longestLossStreak).toBe(3);
     expect(result.currentLossStreak).toBe(0);
     expect(result.modelPerformance.chart.currentLossStreak).toBe(0);
+  });
+
+  it("attributes a material return gap to the impaired source only after 10 + 10 samples", () => {
+    const clean = Array.from({ length: 10 }, (_, index) =>
+      qualityOutcome(index, 1.5, false),
+    );
+    const impaired = Array.from({ length: 10 }, (_, index) =>
+      qualityOutcome(index + 10, -1.5, true),
+    );
+    const legacy = { ...qualityOutcome(21, -20, true), entryDataQuality: undefined };
+    const impact = calculateSourceQualityImpact([
+      ...clean,
+      ...impaired,
+      legacy,
+    ]);
+
+    expect(impact.find((item) => item.source === "geckoterminal")).toMatchObject({
+      status: "performance-alert",
+      cleanCount: 10,
+      impairedCount: 10,
+      cleanAverageNetReturnPercent: 1.5,
+      impairedAverageNetReturnPercent: -1.5,
+      returnGapPercentagePoints: -3,
+      impairedNetPnlUsd: -15,
+    });
+    expect(impact.find((item) => item.source === "blockscout")).toMatchObject({
+      status: "collecting",
+      cleanCount: 20,
+      impairedCount: 0,
+    });
   });
 });
 

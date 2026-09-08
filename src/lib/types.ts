@@ -555,6 +555,18 @@ export interface PaperDataQualityPerformance {
   averageNetReturnPercent: number;
 }
 
+export interface PaperSourceQualityImpact {
+  source: DataSourceId;
+  status: "collecting" | "monitoring" | "performance-alert";
+  minimumSamples: 10;
+  cleanCount: number;
+  impairedCount: number;
+  cleanAverageNetReturnPercent: number;
+  impairedAverageNetReturnPercent: number;
+  returnGapPercentagePoints: number;
+  impairedNetPnlUsd: number;
+}
+
 export interface PaperQualification {
   minimumSamples: number;
   samplePassed: boolean;
@@ -722,6 +734,7 @@ export interface PaperJournalSnapshot {
   dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];
   dataSourceIncidents24h: DataSourceIncidentItem[];
   dataQualityPerformance: PaperDataQualityPerformance[];
+  sourceQualityImpact: PaperSourceQualityImpact[];
   recentOutcomes: PaperTradeOutcome[];
   message: string;
 }
