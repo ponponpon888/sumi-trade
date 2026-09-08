@@ -9,7 +9,7 @@ import {
 import { getPoolOhlcv } from "@/lib/ohlcv";
 import { normalizeCandles } from "@/lib/indicators";
 import { getPaperJournalSnapshot } from "@/lib/paper-journal";
-import { assessModelDrift } from "@/lib/model-drift";
+import { assessModelDrifts } from "@/lib/model-drift";
 import { getPortfolioSnapshot } from "@/lib/portfolio";
 import { assessPortfolioRisk } from "@/lib/portfolio-risk";
 import {
@@ -18,6 +18,7 @@ import {
 } from "@/lib/safety-control";
 import { createStrategyPlan } from "@/lib/strategy";
 import { getTrendScoutSnapshot } from "@/lib/trend-scout";
+import { applyTrendBuyGates } from "@/lib/trend-buy-gate";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
@@ -141,25 +142,18 @@ export async function getTradingDashboardData(): Promise<{
     assessPortfolioRisk(snapshot, chartModel, journal),
     safetyControl,
   );
-  const modelDrift = assessModelDrift(journal);
+  const modelDrift = assessModelDrifts(journal);
   const plan = createStrategyPlan(
     snapshot,
     chartModel.analyses,
     portfolioRisk,
     modelDrift,
   );
-  const blockTrendBuy = portfolioRisk.blockNewBuys || modelDrift.blockNewBuys;
-  const trendScout = blockTrendBuy
-    ? {
-        ...rawTrendScout,
-        paperRotation: null,
-        warnings: [
-          ...rawTrendScout.warnings,
-          modelDrift.blockNewBuys
-            ? `モデル劣化${modelDrift.status.toUpperCase()}: ${modelDrift.reasons[0]}`
-            : `ポートフォリオリスク${portfolioRisk.status.toUpperCase()}: ${portfolioRisk.reasons[0]}`,
-        ],
-      }
-    : rawTrendScout;
+  const trendDrift = modelDrift["community-trend"];
+  const trendScout = applyTrendBuyGates(
+    rawTrendScout,
+    portfolioRisk,
+    trendDrift,
+  );
   return { snapshot, chartModel, plan, trendScout, journal, safetyControl };
 }

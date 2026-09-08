@@ -1,6 +1,6 @@
 import type {
   ChartAnalysis,
-  ModelDriftAssessment,
+  ModelDriftSnapshot,
   PortfolioAsset,
   PortfolioRiskAssessment,
   PortfolioSnapshot,
@@ -18,27 +18,53 @@ interface DraftSignal {
   costGatePassed: boolean | null;
 }
 
-const DEFAULT_MODEL_DRIFT: ModelDriftAssessment = {
-  status: "collecting",
-  blockNewBuys: false,
-  recentDays: 7,
-  baselineDays: 30,
-  recentSamples: 0,
-  baselineSamples: 0,
-  recentNetPnlUsd: 0,
-  recentAverageNetReturnPercent: 0,
-  baselineAverageNetReturnPercent: 0,
-  averageReturnDropPercentagePoints: 0,
-  recentProfitFactor: null,
-  baselineProfitFactor: null,
-  limits: {
-    minimumRecentSamples: 10,
-    minimumBaselineSamples: 30,
-    averageReturnDropPercentagePoints: 1.5,
-    recentProfitFactor: 0.8,
-    baselineProfitFactor: 1.2,
+const DEFAULT_MODEL_DRIFT: ModelDriftSnapshot = {
+  chart: {
+    model: "chart",
+    status: "collecting",
+    blockNewBuys: false,
+    recentDays: 7,
+    baselineDays: 30,
+    recentSamples: 0,
+    baselineSamples: 0,
+    recentNetPnlUsd: 0,
+    recentAverageNetReturnPercent: 0,
+    baselineAverageNetReturnPercent: 0,
+    averageReturnDropPercentagePoints: 0,
+    recentProfitFactor: null,
+    baselineProfitFactor: null,
+    limits: {
+      minimumRecentSamples: 10,
+      minimumBaselineSamples: 30,
+      averageReturnDropPercentagePoints: 1.5,
+      recentProfitFactor: 0.8,
+      baselineProfitFactor: 1.2,
+    },
+    reasons: ["判定サンプルを収集中"],
   },
-  reasons: ["判定サンプルを収集中"],
+  "community-trend": {
+    model: "community-trend",
+    status: "collecting",
+    blockNewBuys: false,
+    recentDays: 7,
+    baselineDays: 30,
+    recentSamples: 0,
+    baselineSamples: 0,
+    recentNetPnlUsd: 0,
+    recentAverageNetReturnPercent: 0,
+    baselineAverageNetReturnPercent: 0,
+    averageReturnDropPercentagePoints: 0,
+    recentProfitFactor: null,
+    baselineProfitFactor: null,
+    limits: {
+      minimumRecentSamples: 10,
+      minimumBaselineSamples: 30,
+      averageReturnDropPercentagePoints: 1.5,
+      recentProfitFactor: 0.8,
+      baselineProfitFactor: 1.2,
+    },
+    reasons: ["判定サンプルを収集中"],
+  },
 };
 
 function draftSignal(
@@ -191,7 +217,7 @@ export function createStrategyPlan(
   snapshot: PortfolioSnapshot,
   chartAnalyses: ChartAnalysis[] = [],
   portfolioRisk: PortfolioRiskAssessment,
-  modelDrift: ModelDriftAssessment = DEFAULT_MODEL_DRIFT,
+  modelDrift: ModelDriftSnapshot = DEFAULT_MODEL_DRIFT,
 ): StrategyPlan {
   const chartBySymbol = new Map(
     chartAnalyses.map((analysis) => [analysis.symbol, analysis]),
@@ -199,12 +225,12 @@ export function createStrategyPlan(
   const drafts = snapshot.assets.map((asset) => {
     const draft = draftSignal(asset, chartBySymbol);
     if (draft.action !== "BUY") return draft;
-    if (modelDrift.blockNewBuys) {
+    if (modelDrift.chart.blockNewBuys) {
       return {
         ...draft,
         action: "HOLD" as const,
         allocationPercent: 0,
-        reason: `モデル劣化${modelDrift.status.toUpperCase()}。${modelDrift.reasons[0]}`,
+        reason: `チャートモデル劣化${modelDrift.chart.status.toUpperCase()}。${modelDrift.chart.reasons[0]}`,
         costGatePassed: false,
       };
     }

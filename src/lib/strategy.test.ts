@@ -5,33 +5,70 @@ import { createStrategyPlan } from "@/lib/strategy";
 import type {
   ChartAnalysis,
   ChartDirection,
-  ModelDriftAssessment,
+  ModelDriftSnapshot,
   PortfolioAsset,
   PortfolioRiskAssessment,
   PortfolioSnapshot,
 } from "@/lib/types";
 
-const DEGRADED_MODEL: ModelDriftAssessment = {
-  status: "degraded",
-  blockNewBuys: true,
-  recentDays: 7,
-  baselineDays: 30,
-  recentSamples: 12,
-  baselineSamples: 35,
-  recentNetPnlUsd: -50,
-  recentAverageNetReturnPercent: -1,
-  baselineAverageNetReturnPercent: 0.8,
-  averageReturnDropPercentagePoints: 1.8,
-  recentProfitFactor: 0.6,
-  baselineProfitFactor: 1.4,
-  limits: {
-    minimumRecentSamples: 10,
-    minimumBaselineSamples: 30,
-    averageReturnDropPercentagePoints: 1.5,
-    recentProfitFactor: 0.8,
-    baselineProfitFactor: 1.2,
+const DEGRADED_MODEL: ModelDriftSnapshot = {
+  chart: {
+    model: "chart",
+    status: "degraded",
+    blockNewBuys: true,
+    recentDays: 7,
+    baselineDays: 30,
+    recentSamples: 12,
+    baselineSamples: 35,
+    recentNetPnlUsd: -50,
+    recentAverageNetReturnPercent: -1,
+    baselineAverageNetReturnPercent: 0.8,
+    averageReturnDropPercentagePoints: 1.8,
+    recentProfitFactor: 0.6,
+    baselineProfitFactor: 1.4,
+    limits: {
+      minimumRecentSamples: 10,
+      minimumBaselineSamples: 30,
+      averageReturnDropPercentagePoints: 1.5,
+      recentProfitFactor: 0.8,
+      baselineProfitFactor: 1.2,
+    },
+    reasons: ["7日平均リターンが30日基準から1.8ポイント低下"],
   },
-  reasons: ["7日平均リターンが30日基準から1.8ポイント低下"],
+  "community-trend": {
+    model: "community-trend",
+    status: "stable",
+    blockNewBuys: false,
+    recentDays: 7,
+    baselineDays: 30,
+    recentSamples: 12,
+    baselineSamples: 35,
+    recentNetPnlUsd: 20,
+    recentAverageNetReturnPercent: 0.5,
+    baselineAverageNetReturnPercent: 0.7,
+    averageReturnDropPercentagePoints: 0.2,
+    recentProfitFactor: 1.3,
+    baselineProfitFactor: 1.5,
+    limits: {
+      minimumRecentSamples: 10,
+      minimumBaselineSamples: 30,
+      averageReturnDropPercentagePoints: 1.5,
+      recentProfitFactor: 0.8,
+      baselineProfitFactor: 1.2,
+    },
+    reasons: ["stable"],
+  },
+};
+
+const COMMUNITY_ONLY_DEGRADED: ModelDriftSnapshot = {
+  chart: {
+    ...DEGRADED_MODEL["community-trend"],
+    model: "chart",
+  },
+  "community-trend": {
+    ...DEGRADED_MODEL.chart,
+    model: "community-trend",
+  },
 };
 
 const PASS_PORTFOLIO_RISK: PortfolioRiskAssessment = {
@@ -415,7 +452,7 @@ describe("createStrategyPlan", () => {
     );
 
     expect(plan.signals[0]).toMatchObject({ action: "HOLD", costGatePassed: false });
-    expect(plan.signals[0].reason).toContain("モデル劣化DEGRADED");
+    expect(plan.signals[0].reason).toContain("チャートモデル劣化DEGRADED");
   });
 
   it("keeps SELL available when model performance degrades", () => {
@@ -427,6 +464,19 @@ describe("createStrategyPlan", () => {
     );
 
     expect(plan.signals[0].action).toBe("SELL");
+  });
+
+  it("keeps chart BUY available when only community trend degrades", () => {
+    const input = snapshot([asset()]);
+    input.gasBalanceUsd = 50;
+    const plan = createStrategyPlan(
+      input,
+      [chart("BUY")],
+      PASS_PORTFOLIO_RISK,
+      COMMUNITY_ONLY_DEGRADED,
+    );
+
+    expect(plan.signals[0].action).toBe("BUY");
   });
 
   it("keeps a liquid asset on hold when chart history is absent", () => {

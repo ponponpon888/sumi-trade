@@ -1,7 +1,9 @@
 import type {
   ModelDriftAssessment,
+  ModelDriftSnapshot,
   PaperJournalSnapshot,
   PaperPeriodPerformance,
+  PaperSignalModel,
 } from "@/lib/types";
 
 const MINIMUM_RECENT_SAMPLES = 10 as const;
@@ -25,14 +27,18 @@ function round(value: number, digits = 2): number {
 
 function period(
   journal: PaperJournalSnapshot,
+  model: PaperSignalModel,
   days: 7 | 30,
 ): PaperPeriodPerformance | undefined {
-  return journal.periodPerformance.find((item) => item.days === days);
+  return journal.periodPerformanceByModel[model].find(
+    (item) => item.days === days,
+  );
 }
 
 function result(
   status: ModelDriftAssessment["status"],
   blockNewBuys: boolean,
+  model: PaperSignalModel,
   recent: PaperPeriodPerformance | undefined,
   baseline: PaperPeriodPerformance | undefined,
   reasons: string[],
@@ -40,6 +46,7 @@ function result(
   const recentAverage = recent?.averageNetReturnPercent ?? 0;
   const baselineAverage = baseline?.averageNetReturnPercent ?? 0;
   return {
+    model,
     status,
     blockNewBuys,
     recentDays: 7,
@@ -59,14 +66,16 @@ function result(
 
 export function assessModelDrift(
   journal: PaperJournalSnapshot,
+  model: PaperSignalModel,
 ): ModelDriftAssessment {
-  const recent = period(journal, 7);
-  const baseline = period(journal, 30);
+  const recent = period(journal, model, 7);
+  const baseline = period(journal, model, 30);
 
   if (!journal.storageConfigured || journal.status === "error" || !recent || !baseline) {
     return result(
       "unavailable",
       true,
+      model,
       recent,
       baseline,
       ["紙上成績を取得できないため、モデル劣化を安全に判定できません。"],
@@ -88,6 +97,7 @@ export function assessModelDrift(
     return result(
       "collecting",
       false,
+      model,
       recent,
       baseline,
       [`判定サンプルを収集中: ${missingSamples.join("・")}`],
@@ -119,14 +129,24 @@ export function assessModelDrift(
     );
   }
   if (reasons.length > 0) {
-    return result("degraded", true, recent, baseline, reasons);
+    return result("degraded", true, model, recent, baseline, reasons);
   }
 
   return result(
     "stable",
     false,
+    model,
     recent,
     baseline,
     ["7日成績に、30日基準からの重大な劣化は検出されませんでした。"],
   );
+}
+
+export function assessModelDrifts(
+  journal: PaperJournalSnapshot,
+): ModelDriftSnapshot {
+  return {
+    chart: assessModelDrift(journal, "chart"),
+    "community-trend": assessModelDrift(journal, "community-trend"),
+  };
 }

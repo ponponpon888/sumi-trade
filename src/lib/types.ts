@@ -323,6 +323,7 @@ export interface PortfolioRiskAssessment {
 }
 
 export interface ModelDriftAssessment {
+  model: PaperSignalModel;
   status: "stable" | "degraded" | "collecting" | "unavailable";
   blockNewBuys: boolean;
   recentDays: 7;
@@ -345,13 +346,18 @@ export interface ModelDriftAssessment {
   reasons: string[];
 }
 
+export type ModelDriftSnapshot = Record<
+  PaperSignalModel,
+  ModelDriftAssessment
+>;
+
 export interface StrategyPlan {
   mode: "paper";
   generatedAt: string;
   cadenceMinutes: 5;
   executionLocked: true;
   portfolioRisk: PortfolioRiskAssessment;
-  modelDrift: ModelDriftAssessment;
+  modelDrift: ModelDriftSnapshot;
   signals: StrategySignal[];
   summary: {
     buyCount: number;
@@ -569,6 +575,7 @@ export interface PaperJournalSnapshot {
   qualification: PaperQualification;
   modelPerformance: Record<PaperSignalModel, PaperModelPerformance>;
   periodPerformance: PaperPeriodPerformance[];
+  periodPerformanceByModel: Record<PaperSignalModel, PaperPeriodPerformance[]>;
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   recentOutcomes: PaperTradeOutcome[];

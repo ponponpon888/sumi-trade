@@ -1822,6 +1822,135 @@ a {
   color: var(--amber);
 }
 
+.model-drift-grid {
+  border: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.model-drift-card {
+  min-width: 0;
+}
+
+.model-drift-card + .model-drift-card {
+  border-left: 1px solid var(--line);
+}
+
+.model-drift-card-heading {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 20px;
+}
+
+.model-drift-card-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.model-drift-card-heading > div span,
+.model-drift-card-heading > div strong,
+.model-drift-metrics span,
+.model-drift-metrics small,
+.model-drift-reasons > span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.model-drift-card-heading > div span {
+  color: var(--lime);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.model-drift-card-heading > div strong {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.model-drift-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.model-drift-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 18px 20px;
+}
+
+.model-drift-metrics > div:nth-child(even) {
+  border-left: 1px solid var(--line);
+}
+
+.model-drift-metrics > div:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
+}
+
+.model-drift-metrics span,
+.model-drift-metrics small,
+.model-drift-reasons > span {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.model-drift-metrics strong {
+  font-size: clamp(18px, 2vw, 28px);
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+}
+
+.model-drift-metrics small {
+  color: #626b64;
+  line-height: 1.5;
+}
+
+.model-drift-reasons {
+  border-top: 1px solid var(--line);
+  padding: 14px 20px 18px;
+}
+
+.model-drift-reasons > span {
+  color: var(--lime);
+  font-weight: 800;
+}
+
+.model-drift-reasons ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.model-drift-reasons li {
+  color: #a8b1aa;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.model-drift-reasons li::before {
+  color: var(--lime);
+  content: "—";
+  margin-right: 7px;
+}
+
+.model-drift-card-degraded .model-drift-reasons > span,
+.model-drift-card-degraded .model-drift-reasons li::before {
+  color: var(--red);
+}
+
+.model-drift-card-collecting .model-drift-reasons > span,
+.model-drift-card-collecting .model-drift-reasons li::before,
+.model-drift-card-unavailable .model-drift-reasons > span,
+.model-drift-card-unavailable .model-drift-reasons li::before {
+  color: var(--amber);
+}
+
 .portfolio-risk-metrics {
   background: linear-gradient(135deg, rgba(200, 255, 61, 0.04), transparent 48%), var(--surface);
   border: 1px solid var(--line);
@@ -2474,6 +2603,8 @@ a {
   .portfolio-risk-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .portfolio-risk-metrics > div:nth-child(3) { border-left: 0; }
   .portfolio-risk-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .model-drift-grid { grid-template-columns: 1fr; }
+  .model-drift-card + .model-drift-card { border-left: 0; border-top: 1px solid var(--line); }
   .strategy-lab-grid { grid-template-columns: 1fr; }
 }
 
@@ -2586,6 +2717,9 @@ a {
   .outcome-list > div > strong:last-child { display: none; }
   .portfolio-risk-metrics { grid-template-columns: 1fr; }
   .portfolio-risk-metrics > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .model-drift-metrics { grid-template-columns: 1fr; }
+  .model-drift-metrics > div:nth-child(even) { border-left: 0; }
+  .model-drift-metrics > div + div { border-top: 1px solid var(--line); }
   .strategy-compare-columns { display: none; }
   .strategy-compare-list > div {
     gap: 8px;

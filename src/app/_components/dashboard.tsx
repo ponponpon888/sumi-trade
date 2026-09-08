@@ -6,6 +6,7 @@ import type {
   ChartAnalysis,
   ChartModelSnapshot,
   ModelDriftAssessment,
+  ModelDriftSnapshot,
   PaperJournalSnapshot,
   PaperModelPerformance,
   PortfolioAsset,
@@ -895,7 +896,13 @@ const modelDriftLabels = {
   unavailable: "DATA WAIT",
 } as const;
 
-function ModelDriftBoard({ drift }: { drift: ModelDriftAssessment }) {
+function DriftModelCard({
+  drift,
+  label,
+}: {
+  drift: ModelDriftAssessment;
+  label: string;
+}) {
   const gapClass =
     drift.averageReturnDropPercentagePoints >=
     drift.limits.averageReturnDropPercentagePoints
@@ -903,25 +910,14 @@ function ModelDriftBoard({ drift }: { drift: ModelDriftAssessment }) {
       : "";
 
   return (
-    <section
-      className={`portfolio-risk-board model-drift-board model-drift-${drift.status} shell`}
-      aria-labelledby="model-drift-title"
-    >
-      <div className="portfolio-risk-heading">
-        <div>
-          <span className="section-index">05 / MODEL DRIFT</span>
-          <h2 id="model-drift-title">直近の崩れを、BUY前に止める。</h2>
-          <p>
-            7日成績を30日基準と比較し、十分な件数と明確な悪化が揃った場合だけ新規BUYを停止します。
-            収集中は追加停止せず、SELL経路とPAPER MODEは常に維持します。
-          </p>
-        </div>
+    <article className={`model-drift-card model-drift-card-${drift.status}`}>
+      <div className="model-drift-card-heading">
+        <div><span>{label}</span><strong>7D VS 30D</strong></div>
         <span className={`portfolio-risk-status model-drift-status-${drift.status}`}>
           {modelDriftLabels[drift.status]}
         </span>
       </div>
-
-      <div className="portfolio-risk-metrics">
+      <div className="model-drift-metrics">
         <div>
           <span>7D AVG RETURN</span>
           <strong>{drift.recentSamples ? signedPercent(drift.recentAverageNetReturnPercent) : "—"}</strong>
@@ -945,10 +941,45 @@ function ModelDriftBoard({ drift }: { drift: ModelDriftAssessment }) {
           <small>RECENT &lt; {drift.limits.recentProfitFactor.toFixed(1)} / BASE ≥ {drift.limits.baselineProfitFactor.toFixed(1)}</small>
         </div>
       </div>
-
-      <div className="portfolio-risk-reasons">
+      <div className="model-drift-reasons">
         <span>{drift.blockNewBuys ? "BUY GATE CLOSED" : "BUY GATE OBSERVE"}</span>
         <ul>{drift.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      </div>
+    </article>
+  );
+}
+
+function ModelDriftBoard({ drift }: { drift: ModelDriftSnapshot }) {
+  const assessments = [drift.chart, drift["community-trend"]];
+  const status = assessments.some((item) => item.status === "unavailable")
+    ? "unavailable"
+    : assessments.some((item) => item.status === "degraded")
+      ? "degraded"
+      : assessments.some((item) => item.status === "collecting")
+        ? "collecting"
+        : "stable";
+
+  return (
+    <section
+      className={`portfolio-risk-board model-drift-board model-drift-${status} shell`}
+      aria-labelledby="model-drift-title"
+    >
+      <div className="portfolio-risk-heading">
+        <div>
+          <span className="section-index">05 / MODEL DRIFT</span>
+          <h2 id="model-drift-title">悪化したモデルだけを、切り離す。</h2>
+          <p>
+            チャートとコミュニティトレンドを別々に7日対30日で比較します。
+            悪化した側の新規BUYだけを停止し、正常なモデルとSELL経路は維持します。
+          </p>
+        </div>
+        <span className={`portfolio-risk-status model-drift-status-${status}`}>
+          {modelDriftLabels[status]}
+        </span>
+      </div>
+      <div className="model-drift-grid">
+        <DriftModelCard drift={drift.chart} label="CORE CHART" />
+        <DriftModelCard drift={drift["community-trend"]} label="COMMUNITY TREND" />
       </div>
     </section>
   );
@@ -1218,7 +1249,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.11</span>
+          <span>SUMI TRADE LAB / BUILD 1.12</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

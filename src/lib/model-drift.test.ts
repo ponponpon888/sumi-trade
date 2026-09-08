@@ -35,6 +35,14 @@ function journal(
     status: "collecting",
     storageConfigured: true,
     periodPerformance: [performance(1, 2, 0.2, 2, 1), recent, baseline],
+    periodPerformanceByModel: {
+      chart: [performance(1, 2, 0.2, 2, 1), recent, baseline],
+      "community-trend": [
+        performance(1, 0, 0, 0, null),
+        performance(7, 0, 0, 0, null),
+        performance(30, 0, 0, 0, null),
+      ],
+    },
     ...overrides,
   };
 }
@@ -43,6 +51,7 @@ describe("model drift", () => {
   it("collects without adding a BUY block before evidence is sufficient", () => {
     const result = assessModelDrift(
       journal(performance(7, 9, -4, -30, 0.2), performance(30, 29, 1, 80, 1.5)),
+      "chart",
     );
 
     expect(result.status).toBe("collecting");
@@ -50,7 +59,7 @@ describe("model drift", () => {
   });
 
   it("passes ordinary short-term variation", () => {
-    const result = assessModelDrift(journal());
+    const result = assessModelDrift(journal(), "chart");
 
     expect(result.status).toBe("stable");
     expect(result.blockNewBuys).toBe(false);
@@ -59,6 +68,7 @@ describe("model drift", () => {
   it("blocks BUY when recent negative returns fall materially below baseline", () => {
     const result = assessModelDrift(
       journal(performance(7, 12, -1.1, -55, 0.9), performance(30, 35, 0.8, 90, 1.4)),
+      "chart",
     );
 
     expect(result.status).toBe("degraded");
@@ -69,6 +79,7 @@ describe("model drift", () => {
   it("blocks BUY when profit factor collapses from a qualified baseline", () => {
     const result = assessModelDrift(
       journal(performance(7, 12, 0.1, -10, 0.7), performance(30, 35, 0.8, 90, 1.3)),
+      "chart",
     );
 
     expect(result.status).toBe("degraded");
@@ -76,12 +87,33 @@ describe("model drift", () => {
   });
 
   it("treats missing storage as unavailable and fails closed", () => {
-    const result = assessModelDrift(journal(undefined, undefined, {
-      storageConfigured: false,
-      status: "disabled",
-    }));
+    const result = assessModelDrift(
+      journal(undefined, undefined, {
+        storageConfigured: false,
+        status: "disabled",
+      }),
+      "chart",
+    );
 
     expect(result.status).toBe("unavailable");
     expect(result.blockNewBuys).toBe(true);
+  });
+
+  it("isolates community trend degradation from a stable chart model", () => {
+    const chartRecent = performance(7, 12, 0.5, 20, 1.3);
+    const chartBaseline = performance(30, 35, 0.7, 80, 1.5);
+    const input = journal(chartRecent, chartBaseline);
+    input.periodPerformanceByModel["community-trend"] = [
+      performance(1, 2, -1, -5, 0.4),
+      performance(7, 12, -1.1, -55, 0.6),
+      performance(30, 35, 0.8, 90, 1.4),
+    ];
+
+    expect(assessModelDrift(input, "chart").status).toBe("stable");
+    expect(assessModelDrift(input, "community-trend")).toMatchObject({
+      model: "community-trend",
+      status: "degraded",
+      blockNewBuys: true,
+    });
   });
 });

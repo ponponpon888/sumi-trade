@@ -679,6 +679,26 @@ export function emptyPaperJournal(
       profitFactor: null,
       maxDrawdownPercent: 0,
     })),
+    periodPerformanceByModel: {
+      chart: ([1, 7, 30] as const).map((days) => ({
+        days,
+        maturedCount: 0,
+        winRate: 0,
+        netPnlUsd: 0,
+        averageNetReturnPercent: 0,
+        profitFactor: null,
+        maxDrawdownPercent: 0,
+      })),
+      "community-trend": ([1, 7, 30] as const).map((days) => ({
+        days,
+        maturedCount: 0,
+        winRate: 0,
+        netPnlUsd: 0,
+        averageNetReturnPercent: 0,
+        profitFactor: null,
+        maxDrawdownPercent: 0,
+      })),
+    },
     assetPerformance: [],
     performanceTimeline: [],
     recentOutcomes: [],
@@ -709,8 +729,10 @@ export function evaluatePaperJournal(
   const outcomes = candidates
     .map((candidate) => settleSignal(candidate, records))
     .filter((outcome): outcome is PaperTradeOutcome => outcome !== null);
-  const analyticsOutcomes = collectPaperTradeOutcomes(analyticsRecords, nowMs)
-    .filter((outcome) => signalModel(outcome) === "chart");
+  const allAnalyticsOutcomes = collectPaperTradeOutcomes(analyticsRecords, nowMs);
+  const analyticsOutcomes = allAnalyticsOutcomes.filter(
+    (outcome) => signalModel(outcome) === "chart",
+  );
   const startingCapital = records[0]?.portfolioValueUsd ?? 0;
   const analyticsStartingCapital =
     analyticsRecords[0]?.portfolioValueUsd ?? startingCapital;
@@ -790,6 +812,20 @@ export function evaluatePaperJournal(
       nowMs,
       analyticsStartingCapital,
     ),
+    periodPerformanceByModel: {
+      chart: periodPerformance(
+        analyticsOutcomes,
+        nowMs,
+        analyticsStartingCapital,
+      ),
+      "community-trend": periodPerformance(
+        allAnalyticsOutcomes.filter(
+          (outcome) => signalModel(outcome) === "community-trend",
+        ),
+        nowMs,
+        analyticsStartingCapital,
+      ),
+    },
     assetPerformance: assetPerformance(
       analyticsOutcomes,
       analyticsStartingCapital,
