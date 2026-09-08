@@ -511,6 +511,20 @@ function ChartModelBoard({ chartModel }: { chartModel: ChartModelSnapshot }) {
   );
 }
 
+const strategyComparisonShortLabels = {
+  "sumi-regime": "SUMI",
+  "ema-trend": "EMA",
+  "rsi-reversion": "RSI",
+} as const;
+
+const strategyComparisonRegimeLabels = {
+  uptrend: "UPTREND",
+  downtrend: "DOWNTREND",
+  range: "RANGE",
+  "high-volatility": "HIGH VOL",
+  "low-liquidity": "LOW LIQ",
+} as const;
+
 function StrategyComparisonBoard({ chartModel }: { chartModel: ChartModelSnapshot }) {
   const comparable = chartModel.analyses.filter(
     (analysis) => analysis.strategyComparison.status === "ready",
@@ -559,6 +573,40 @@ function StrategyComparisonBoard({ chartModel }: { chartModel: ChartModelSnapsho
                       <strong>{result.profitFactor === null ? "—" : result.profitFactor.toFixed(2)}</strong>
                     </div>
                   ))}
+                </div>
+                <div className="strategy-regime-walkforward">
+                  <div className="strategy-regime-title">
+                    <strong>REGIME WALK-FORWARD</strong>
+                    <small>10H TEST WINDOWS · START-ONLY CLASSIFICATION</small>
+                  </div>
+                  {comparison.walkForwardByRegime.length > 0 ? (
+                    comparison.walkForwardByRegime.map((regime) => (
+                      <article key={regime.regime}>
+                        <div className="strategy-regime-head">
+                          <div>
+                            <strong>{strategyComparisonRegimeLabels[regime.regime]}</strong>
+                            <small>{regime.windowCount} WINDOWS</small>
+                          </div>
+                          <b>
+                            LEADER {regime.leaderId ? strategyComparisonShortLabels[regime.leaderId] : "—"}
+                          </b>
+                        </div>
+                        <div className="strategy-regime-results">
+                          {regime.results.map((result) => (
+                            <div className={result.id === regime.leaderId ? "is-leader" : ""} key={result.id}>
+                              <span>#{result.rank} {strategyComparisonShortLabels[result.id]}</span>
+                              <strong className={result.netReturnPercent >= 0 ? "positive" : "negative"}>
+                                {signedPercent(result.netReturnPercent)}
+                              </strong>
+                              <small>{result.tradeCount} TRADES · {result.profitableWindowRate.toFixed(0)}% WIN WINDOWS</small>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p>360本の学習区間と120本のテスト区間を収集中です。</p>
+                  )}
                 </div>
                 <p>{comparison.notes.join(" · ")}</p>
               </article>
@@ -1477,7 +1525,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.20</span>
+          <span>SUMI TRADE LAB / BUILD 1.21</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

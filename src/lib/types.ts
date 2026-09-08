@@ -163,6 +163,24 @@ export interface StrategyComparisonResult {
   rank: number;
 }
 
+export interface StrategyRegimeWalkForwardResult {
+  id: StrategyComparisonId;
+  name: string;
+  windowCount: number;
+  tradeCount: number;
+  profitableWindowRate: number;
+  netReturnPercent: number;
+  rank: number;
+}
+
+export interface StrategyRegimeWalkForward {
+  regime: MarketRegime;
+  windowCount: number;
+  leaderId: StrategyComparisonId | null;
+  researchOnly: true;
+  results: StrategyRegimeWalkForwardResult[];
+}
+
 export interface StrategyComparisonSnapshot {
   status: "ready" | "insufficient";
   candleCount: number;
@@ -170,6 +188,7 @@ export interface StrategyComparisonSnapshot {
   leaderId: StrategyComparisonId | null;
   researchOnly: true;
   results: StrategyComparisonResult[];
+  walkForwardByRegime: StrategyRegimeWalkForward[];
   notes: string[];
 }
 
