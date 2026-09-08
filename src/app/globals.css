@@ -1438,6 +1438,133 @@ a {
   white-space: nowrap;
 }
 
+.calibration-board {
+  border: 1px solid var(--line);
+  border-top: 0;
+}
+
+.calibration-board-heading,
+.calibration-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.calibration-board-heading {
+  border-bottom: 1px solid var(--line);
+  padding: 17px 20px;
+}
+
+.calibration-board-heading > div,
+.calibration-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calibration-board-heading span,
+.calibration-board-heading strong,
+.calibration-board-heading small,
+.calibration-head span,
+.calibration-head small,
+.calibration-head strong,
+.calibration-bands span,
+.calibration-bands small,
+.calibration-note {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.calibration-board-heading span,
+.calibration-head span {
+  color: var(--lime);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.calibration-board-heading strong {
+  font-size: 16px;
+}
+
+.calibration-board-heading small,
+.calibration-head small,
+.calibration-bands span,
+.calibration-bands small,
+.calibration-note {
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.calibration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.calibration-card {
+  min-width: 0;
+  padding: 18px 20px;
+}
+
+.calibration-card + .calibration-card {
+  border-left: 1px solid var(--line);
+}
+
+.calibration-head > strong {
+  border: 1px solid rgba(255, 189, 89, 0.4);
+  color: var(--amber);
+  font-size: 8px;
+  padding: 6px 8px;
+}
+
+.calibration-aligned .calibration-head > strong {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #080a09;
+}
+
+.calibration-inverted .calibration-head > strong {
+  border-color: rgba(255, 101, 95, 0.48);
+  color: var(--red);
+}
+
+.calibration-bands {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.calibration-bands > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.calibration-bands > div + div {
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
+}
+
+.calibration-bands strong {
+  font-size: 16px;
+}
+
+.calibration-card p {
+  color: #a8b1aa;
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 16px 0 7px;
+}
+
+.calibration-inverted p {
+  color: var(--red);
+}
+
+.calibration-note {
+  display: block;
+}
+
 .performance-lens {
   border: 1px solid var(--line);
   border-top: 0;
@@ -2660,6 +2787,9 @@ a {
   .trend-grid { grid-template-columns: 1fr; }
   .model-performance-grid { grid-template-columns: 1fr; }
   .model-performance-card + .model-performance-card { border-left: 0; border-top: 1px solid var(--line); }
+  .calibration-grid { grid-template-columns: 1fr; }
+  .calibration-card + .calibration-card { border-left: 0; border-top: 1px solid var(--line); }
+  .calibration-board-heading { align-items: start; flex-direction: column; gap: 8px; }
   .performance-detail-grid { grid-template-columns: 1fr; }
   .asset-performance-card { border-left: 0; border-top: 1px solid var(--line); }
   .payoff-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }

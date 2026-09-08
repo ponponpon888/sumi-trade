@@ -548,6 +548,28 @@ export interface PaperDriftPerformance {
   };
 }
 
+export type PaperConfidenceBandId = "low" | "medium" | "high";
+
+export interface PaperConfidenceBandPerformance {
+  band: PaperConfidenceBandId;
+  minimumConfidence: number;
+  maximumConfidence: number;
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+}
+
+export interface PaperConfidenceCalibration {
+  model: PaperSignalModel;
+  status: "collecting" | "aligned" | "inverted";
+  minimumSamplesPerGroup: 10;
+  highConfidencePremiumPercentagePoints: number | null;
+  bands: PaperConfidenceBandPerformance[];
+  reasons: string[];
+  researchOnly: true;
+}
+
 export interface PaperAssetPerformance {
   symbol: string;
   maturedCount: number;
@@ -598,6 +620,7 @@ export interface PaperJournalSnapshot {
   periodPerformance: PaperPeriodPerformance[];
   periodPerformanceByModel: Record<PaperSignalModel, PaperPeriodPerformance[]>;
   driftPerformanceByModel: Record<PaperSignalModel, PaperDriftPerformance>;
+  confidenceCalibrationByModel: Record<PaperSignalModel, PaperConfidenceCalibration>;
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   recentOutcomes: PaperTradeOutcome[];

@@ -2,6 +2,8 @@ import type {
   ChartModelSnapshot,
   PaperJournalSnapshot,
   PaperAssetPerformance,
+  PaperConfidenceCalibration,
+  PaperConfidenceBandPerformance,
   PaperDriftPerformance,
   PaperModelPerformance,
   PaperOperationalReadiness,
@@ -35,6 +37,7 @@ const MIN_COST_GATE_COVERAGE_PERCENT = 70;
 const SCAN_FRESHNESS_MINUTES = 12;
 const ONE_HOUR_MS = 60 * 60 * 1_000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+const MINIMUM_CALIBRATION_SAMPLES = 10 as const;
 
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -633,6 +636,72 @@ function assetPerformance(
     .slice(0, 6);
 }
 
+export function calculateConfidenceCalibration(
+  outcomes: PaperTradeOutcome[],
+  model: PaperSignalModel,
+): PaperConfidenceCalibration {
+  const definitions = [
+    { band: "low", minimumConfidence: 0, maximumConfidence: 49 },
+    { band: "medium", minimumConfidence: 50, maximumConfidence: 69 },
+    { band: "high", minimumConfidence: 70, maximumConfidence: 100 },
+  ] as const;
+  const bands: PaperConfidenceBandPerformance[] = definitions.map((definition) => {
+    const scoped = outcomes.filter((outcome) => {
+      const confidence = Math.max(0, Math.min(100, outcome.confidence));
+      if (definition.band === "low") return confidence < 50;
+      if (definition.band === "medium") return confidence >= 50 && confidence < 70;
+      return confidence >= 70;
+    });
+    const metrics = calculateOutcomeMetrics(scoped, 0);
+    return {
+      ...definition,
+      maturedCount: metrics.maturedCount,
+      winRate: metrics.winRate,
+      netPnlUsd: metrics.netPnlUsd,
+      averageNetReturnPercent: metrics.averageNetReturnPercent,
+    };
+  });
+  const high = bands.find((band) => band.band === "high")!;
+  const lowerOutcomes = outcomes.filter(
+    (outcome) => Math.max(0, Math.min(100, outcome.confidence)) < 70,
+  );
+  const lower = calculateOutcomeMetrics(lowerOutcomes, 0);
+  if (
+    high.maturedCount < MINIMUM_CALIBRATION_SAMPLES ||
+    lower.maturedCount < MINIMUM_CALIBRATION_SAMPLES
+  ) {
+    return {
+      model,
+      status: "collecting",
+      minimumSamplesPerGroup: MINIMUM_CALIBRATION_SAMPLES,
+      highConfidencePremiumPercentagePoints: null,
+      bands,
+      reasons: [
+        `高確信度 ${high.maturedCount}/${MINIMUM_CALIBRATION_SAMPLES}件・70未満 ${lower.maturedCount}/${MINIMUM_CALIBRATION_SAMPLES}件を収集中`,
+      ],
+      researchOnly: true,
+    };
+  }
+
+  const premium = round(
+    high.averageNetReturnPercent - lower.averageNetReturnPercent,
+  );
+  const inverted = high.netPnlUsd < 0 && premium <= -1;
+  return {
+    model,
+    status: inverted ? "inverted" : "aligned",
+    minimumSamplesPerGroup: MINIMUM_CALIBRATION_SAMPLES,
+    highConfidencePremiumPercentagePoints: premium,
+    bands,
+    reasons: [
+      inverted
+        ? `高確信度帯の平均リターンが70未満を${Math.abs(premium).toFixed(2)}ポイント下回り、損益もマイナスです。`
+        : "高確信度帯に重大な逆転は検出されませんでした。",
+    ],
+    researchOnly: true,
+  };
+}
+
 function performanceTimeline(
   outcomes: PaperTradeOutcome[],
   nowMs: number,
@@ -760,6 +829,10 @@ export function emptyPaperJournal(
         recent: driftWindowMetrics([], 0),
         baseline: driftWindowMetrics([], 0),
       },
+    },
+    confidenceCalibrationByModel: {
+      chart: calculateConfidenceCalibration([], "chart"),
+      "community-trend": calculateConfidenceCalibration([], "community-trend"),
     },
     assetPerformance: [],
     performanceTimeline: [],
@@ -899,6 +972,13 @@ export function evaluatePaperJournal(
         communityAnalyticsOutcomes,
         nowMs,
         analyticsStartingCapital,
+      ),
+    },
+    confidenceCalibrationByModel: {
+      chart: calculateConfidenceCalibration(analyticsOutcomes, "chart"),
+      "community-trend": calculateConfidenceCalibration(
+        communityAnalyticsOutcomes,
+        "community-trend",
       ),
     },
     assetPerformance: assetPerformance(
