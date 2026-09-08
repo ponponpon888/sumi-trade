@@ -24,12 +24,26 @@ export async function GET() {
         cadenceMinutes: 5,
       })
     : "error";
+  const openDataSourceIncidents = journal?.dataSourceIncidents24h
+    .filter((incident) => incident.status === "incident")
+    .map((incident) => incident.source) ?? [];
+  const dataSourceIncidentStatus = openDataSourceIncidents.length > 0
+    ? "incident"
+    : journal?.dataSourceIncidents24h.some(
+        (incident) => incident.status === "recovered",
+      )
+      ? "recovered"
+      : journal?.dataSourceIncidents24h.every(
+          (incident) => incident.status === "monitoring",
+        )
+        ? "monitoring"
+        : "collecting";
 
   return Response.json(
     {
       ok: true,
       service: "sumi-trade-lab",
-      buildVersion: "1.21.0",
+      buildVersion: "1.22.0",
       mode: "paper",
       executionLocked: true,
       configurationStatus: runtimeConfiguration.status,
@@ -44,6 +58,8 @@ export async function GET() {
       observationHours: journal?.operationalReadiness.observationHours ?? 0,
       scanCoverage24hPercent:
         journal?.operationalReadiness.scanCoverage24hPercent ?? 0,
+      dataSourceIncidentStatus,
+      openDataSourceIncidents,
       checkedAt: new Date(nowMs).toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } },

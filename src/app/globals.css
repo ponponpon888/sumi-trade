@@ -511,6 +511,24 @@ a {
 .data-source-history-healthy span { color: var(--lime); }
 .data-source-history-degraded span { color: var(--red); }
 
+.data-source-incident {
+  border-top: 1px dashed var(--line-strong);
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.data-source-incident span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.data-source-incident-incident span { color: var(--red); }
+.data-source-incident-recovered span { color: var(--mint); }
+
 .data-source-card-degraded {
   background: rgba(255, 189, 89, 0.045);
 }

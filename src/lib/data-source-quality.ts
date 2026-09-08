@@ -1,6 +1,7 @@
 import type {
   ChartModelSnapshot,
   DataSourceId,
+  DataSourceIncidentItem,
   DataSourceQualityHistoryItem,
   DataSourceQualityItem,
   DataSourceQualitySnapshot,
@@ -183,6 +184,91 @@ export function calculateDataSourceQualityHistory(
       availabilityPercent,
       averageCoveragePercent,
       currentFailureStreak,
+    };
+  });
+}
+
+export function calculateDataSourceIncidents(
+  records: PaperScanRecord[],
+  nowMs = Date.now(),
+): DataSourceIncidentItem[] {
+  const windowStart = nowMs - DATA_SOURCE_HISTORY_WINDOW_MS;
+  const observations = records
+    .filter(
+      (record) =>
+        record.bucketTimeMs >= windowStart && record.bucketTimeMs <= nowMs,
+    )
+    .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
+
+  return DATA_SOURCE_IDS.map((source) => {
+    const sourceObservations = observations.flatMap((record) =>
+      (record.dataSourceQuality ?? [])
+        .filter((item) => item.source === source)
+        .map((item) => ({ ...item, bucketTimeMs: record.bucketTimeMs })),
+    );
+    let failureStreak = 0;
+    let recoveryStreak = 0;
+    let incidentOpen = false;
+    let incidentCount24h = 0;
+    let currentFailureStreak = 0;
+    let currentRecoveryStreak = 0;
+    let latestIncidentStartedAt: string | null = null;
+    let latestRecoveredAt: string | null = null;
+
+    for (const [index, observation] of sourceObservations.entries()) {
+      if (!incidentOpen) {
+        failureStreak = observation.status === "unavailable"
+          ? failureStreak + 1
+          : 0;
+        if (failureStreak >= 3) {
+          incidentOpen = true;
+          incidentCount24h += 1;
+          const incidentStart = sourceObservations[index - 2];
+          latestIncidentStartedAt = new Date(
+            incidentStart?.bucketTimeMs ?? observation.bucketTimeMs,
+          ).toISOString();
+          recoveryStreak = 0;
+        }
+        continue;
+      }
+
+      recoveryStreak = observation.status === "healthy"
+        ? recoveryStreak + 1
+        : 0;
+      if (recoveryStreak >= 3) {
+        incidentOpen = false;
+        latestRecoveredAt = new Date(observation.bucketTimeMs).toISOString();
+        failureStreak = 0;
+      }
+    }
+
+    for (const observation of sourceObservations.toReversed()) {
+      if (observation.status !== "unavailable") break;
+      currentFailureStreak += 1;
+    }
+    if (incidentOpen) {
+      for (const observation of sourceObservations.toReversed()) {
+        if (observation.status !== "healthy") break;
+        currentRecoveryStreak += 1;
+      }
+    }
+
+    const status = incidentOpen
+      ? "incident"
+      : latestRecoveredAt
+        ? "recovered"
+        : sourceObservations.length < DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS
+          ? "collecting"
+          : "monitoring";
+
+    return {
+      source,
+      status,
+      incidentCount24h,
+      currentFailureStreak,
+      currentRecoveryStreak,
+      latestIncidentStartedAt,
+      latestRecoveredAt,
     };
   });
 }

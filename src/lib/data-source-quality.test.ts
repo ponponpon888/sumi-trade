@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assessDataSourceQuality,
+  calculateDataSourceIncidents,
   calculateDataSourceQualityHistory,
 } from "@/lib/data-source-quality";
 import type {
@@ -180,6 +181,71 @@ describe("data source quality", () => {
       availabilityPercent: 75,
       averageCoveragePercent: 75,
       currentFailureStreak: 3,
+    });
+  });
+
+  it("opens an incident after three failures and requires three healthy recoveries", () => {
+    const nowMs = Date.parse("2026-09-08T12:00:00.000Z");
+    const statuses: DataSourceQualityItem["status"][] = [
+      "healthy",
+      "healthy",
+      "unavailable",
+      "unavailable",
+      "unavailable",
+      "healthy",
+      "healthy",
+    ];
+    const records = statuses.map((status, index) =>
+      historyRecord(
+        nowMs - (statuses.length - 1 - index) * 5 * 60_000,
+        status,
+      ),
+    );
+
+    const openIncident = calculateDataSourceIncidents(records, nowMs).find(
+      (item) => item.source === "ethereum-rpc",
+    );
+    expect(openIncident).toMatchObject({
+      status: "incident",
+      incidentCount24h: 1,
+      currentRecoveryStreak: 2,
+    });
+
+    const recovered = calculateDataSourceIncidents(
+      [...records, historyRecord(nowMs + 5 * 60_000, "healthy")],
+      nowMs + 5 * 60_000,
+    ).find((item) => item.source === "ethereum-rpc");
+    expect(recovered).toMatchObject({
+      status: "recovered",
+      incidentCount24h: 1,
+      currentRecoveryStreak: 0,
+    });
+    expect(recovered?.latestRecoveredAt).not.toBeNull();
+  });
+
+  it("does not count partial data as a healthy recovery", () => {
+    const nowMs = Date.parse("2026-09-08T12:00:00.000Z");
+    const statuses: DataSourceQualityItem["status"][] = [
+      "unavailable",
+      "unavailable",
+      "unavailable",
+      "healthy",
+      "degraded",
+      "healthy",
+    ];
+    const records = statuses.map((status, index) =>
+      historyRecord(
+        nowMs - (statuses.length - 1 - index) * 5 * 60_000,
+        status,
+      ),
+    );
+
+    const incident = calculateDataSourceIncidents(records, nowMs).find(
+      (item) => item.source === "ethereum-rpc",
+    );
+    expect(incident).toMatchObject({
+      status: "incident",
+      currentRecoveryStreak: 1,
     });
   });
 });
