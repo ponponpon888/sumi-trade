@@ -7,6 +7,7 @@ import type {
   ChartModelSnapshot,
   ModelDriftAssessment,
   ModelDriftSnapshot,
+  PaperConfidenceCalibration,
   PaperJournalSnapshot,
   PaperModelPerformance,
   PortfolioAsset,
@@ -650,6 +651,67 @@ function ModelPerformanceCard({
   );
 }
 
+const calibrationStatusLabels = {
+  collecting: "COLLECTING",
+  aligned: "ALIGNED",
+  inverted: "OVERCONFIDENT",
+} as const;
+
+const confidenceBandLabels = {
+  low: "0–49",
+  medium: "50–69",
+  high: "70–100",
+} as const;
+
+function ConfidenceCalibrationCard({
+  label,
+  calibration,
+}: {
+  label: string;
+  calibration: PaperConfidenceCalibration;
+}) {
+  return (
+    <article className={`calibration-card calibration-${calibration.status}`}>
+      <div className="calibration-head">
+        <div><span>{label}</span><small>30D CONFIDENCE RANKING</small></div>
+        <strong>{calibrationStatusLabels[calibration.status]}</strong>
+      </div>
+      <div className="calibration-bands">
+        {calibration.bands.map((band) => (
+          <div key={band.band}>
+            <span>{confidenceBandLabels[band.band]}</span>
+            <strong>{band.maturedCount ? signedPercent(band.averageNetReturnPercent) : "—"}</strong>
+            <small>{band.maturedCount} settled · WR {band.maturedCount ? `${band.winRate.toFixed(0)}%` : "—"}</small>
+          </div>
+        ))}
+      </div>
+      <p>{calibration.reasons[0]}</p>
+      <small className="calibration-note">RESEARCH ONLY · BUYゲートへ自動接続しません</small>
+    </article>
+  );
+}
+
+function ConfidenceCalibrationBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  return (
+    <section className="calibration-board" aria-label="確信度スコア校正">
+      <div className="calibration-board-heading">
+        <div><span>CONFIDENCE CALIBRATION</span><strong>高スコアが、本当に強いか。</strong></div>
+        <small>HIGH ≥ 70 / LOWER &lt; 70 · MIN 10 EACH</small>
+      </div>
+      <div className="calibration-grid">
+        <ConfidenceCalibrationCard
+          label="CORE CHART"
+          calibration={journal.confidenceCalibrationByModel.chart}
+        />
+        <ConfidenceCalibrationCard
+          label="COMMUNITY TREND"
+          calibration={journal.confidenceCalibrationByModel["community-trend"]}
+        />
+      </div>
+    </section>
+  );
+}
+
 function PerformanceCurve({ journal }: { journal: PaperJournalSnapshot }) {
   const values = journal.performanceTimeline.map(
     (point) => point.cumulativeNetPnlUsd,
@@ -836,6 +898,8 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
           performance={journal.modelPerformance["community-trend"]}
         />
       </div>
+
+      <ConfidenceCalibrationBoard journal={journal} />
 
       <PerformanceLens journal={journal} />
 
@@ -1255,7 +1319,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.14</span>
+          <span>SUMI TRADE LAB / BUILD 1.15</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>
