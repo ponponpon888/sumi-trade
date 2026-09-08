@@ -5,6 +5,7 @@ import { formatAmount, formatUsd } from "@/lib/number";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  DataSourceQualitySnapshot,
   ModelDriftAssessment,
   ModelDriftSnapshot,
   PaperConfidenceCalibration,
@@ -74,6 +75,58 @@ const onchainPreflightLabels = {
   blocked: "CHAIN BLOCK",
   unavailable: "CHAIN WAIT",
 } as const;
+
+const dataSourceLabels = {
+  blockscout: "BLOCKSCOUT",
+  dexscreener: "DEXSCREENER",
+  geckoterminal: "GECKOTERMINAL",
+  "ethereum-rpc": "ETHEREUM RPC",
+  kyberswap: "KYBERSWAP",
+} as const;
+
+const dataSourceStatusLabels = {
+  healthy: "HEALTHY",
+  degraded: "PARTIAL",
+  unavailable: "NO SAMPLE",
+} as const;
+
+function DataSourceQualityBoard({
+  quality,
+}: {
+  quality: DataSourceQualitySnapshot;
+}) {
+  return (
+    <section
+      className={`data-source-board data-source-${quality.status} shell`}
+      aria-labelledby="data-source-title"
+    >
+      <div className="data-source-heading">
+        <div>
+          <span className="section-index">DATA SOURCE QUALITY</span>
+          <h2 id="data-source-title">判断の前に、データの穴を見る。</h2>
+          <p>各取得元の今回スキャン対象・成功数・欠損率を表示します。品質表示は読み取り専用で、既存のFail Closed判定を緩めません。</p>
+        </div>
+        <span className={`data-source-overall data-source-overall-${quality.status}`}>
+          {quality.status === "healthy" ? "ALL HEALTHY" : "SOURCE WATCH"}
+        </span>
+      </div>
+      <div className="data-source-grid">
+        {quality.sources.map((source) => (
+          <article className={`data-source-card data-source-card-${source.status}`} key={source.source}>
+            <div>
+              <span>{dataSourceLabels[source.source]}</span>
+              <b>{dataSourceStatusLabels[source.status]}</b>
+            </div>
+            <strong>{source.coveragePercent.toFixed(1)}%</strong>
+            <small>{source.successfulCount}/{source.observedCount} COMPLETE · MISSING {(100 - source.coveragePercent).toFixed(1)}%</small>
+            <small>{source.dataAgeSeconds === null ? "SOURCE AGE N/A" : `MAX AGE ${source.dataAgeSeconds.toFixed(0)}S`}</small>
+            <p>{source.reasons[0]}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
@@ -1212,6 +1265,7 @@ export function Dashboard({
   journal,
   trendScout,
   safetyControl,
+  dataSourceQuality,
 }: {
   snapshot: PortfolioSnapshot;
   chartModel: ChartModelSnapshot;
@@ -1219,6 +1273,7 @@ export function Dashboard({
   journal: PaperJournalSnapshot;
   trendScout: TrendScoutSnapshot;
   safetyControl: SafetyControlSnapshot;
+  dataSourceQuality: DataSourceQualitySnapshot;
 }) {
   const signals = new Map(plan.signals.map((signal) => [signal.symbol, signal]));
   const actionableSignals = plan.signals.filter((signal) =>
@@ -1300,6 +1355,8 @@ export function Dashboard({
       ) : null}
 
       <OperationalSafetyStrip safety={safetyControl} />
+
+      <DataSourceQualityBoard quality={dataSourceQuality} />
 
       <ChartModelBoard chartModel={chartModel} />
 
@@ -1397,7 +1454,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.18</span>
+          <span>SUMI TRADE LAB / BUILD 1.19</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

@@ -47,6 +47,7 @@ export default async function Home() {
       journal={result.journal}
       trendScout={result.trendScout}
       safetyControl={result.safetyControl}
+      dataSourceQuality={result.dataSourceQuality}
     />
   );
 }

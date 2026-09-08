@@ -19,9 +19,11 @@ import {
 import { createStrategyPlan } from "@/lib/strategy";
 import { getTrendScoutSnapshot } from "@/lib/trend-scout";
 import { applyTrendBuyGates } from "@/lib/trend-buy-gate";
+import { assessDataSourceQuality } from "@/lib/data-source-quality";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  DataSourceQualitySnapshot,
   PaperJournalSnapshot,
   PortfolioAsset,
   PortfolioSnapshot,
@@ -130,6 +132,7 @@ export async function getTradingDashboardData(): Promise<{
   trendScout: TrendScoutSnapshot;
   journal: PaperJournalSnapshot;
   safetyControl: SafetyControlSnapshot;
+  dataSourceQuality: DataSourceQualitySnapshot;
 }> {
   const snapshot = await getPortfolioSnapshot();
   const [chartModel, rawTrendScout, journal, safetyControl] = await Promise.all([
@@ -155,5 +158,14 @@ export async function getTradingDashboardData(): Promise<{
     portfolioRisk,
     trendDrift,
   );
-  return { snapshot, chartModel, plan, trendScout, journal, safetyControl };
+  const dataSourceQuality = assessDataSourceQuality(snapshot, chartModel);
+  return {
+    snapshot,
+    chartModel,
+    plan,
+    trendScout,
+    journal,
+    safetyControl,
+    dataSourceQuality,
+  };
 }

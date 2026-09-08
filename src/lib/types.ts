@@ -222,6 +222,30 @@ export interface ChartModelSnapshot {
   warnings: string[];
 }
 
+export type DataSourceId =
+  | "blockscout"
+  | "dexscreener"
+  | "geckoterminal"
+  | "ethereum-rpc"
+  | "kyberswap";
+
+export interface DataSourceQualityItem {
+  source: DataSourceId;
+  status: "healthy" | "degraded" | "unavailable";
+  observedCount: number;
+  successfulCount: number;
+  coveragePercent: number;
+  dataAgeSeconds: number | null;
+  reasons: string[];
+}
+
+export interface DataSourceQualitySnapshot {
+  generatedAt: string;
+  status: "healthy" | "degraded";
+  sources: DataSourceQualityItem[];
+  readOnly: true;
+}
+
 export interface MarketData {
   dexId: string;
   pairAddress: string;
