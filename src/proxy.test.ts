@@ -43,6 +43,16 @@ describe("production dashboard proxy", () => {
     expect(response.headers.get("www-authenticate")).toContain("SUMI TRADE LAB");
   });
 
+  it("protects the paper outcome export with dashboard authentication", () => {
+    process.env.VERCEL = "1";
+    process.env.DASHBOARD_PASSWORD = "correct-horse";
+    const request = new NextRequest(
+      "https://example.vercel.app/api/paper/export",
+    );
+
+    expect(proxy(request).status).toBe(401);
+  });
+
   it("allows exact credentials", () => {
     process.env.VERCEL = "1";
     process.env.DASHBOARD_USER = "owner";

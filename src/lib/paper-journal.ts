@@ -5,6 +5,7 @@ import { Redis } from "@upstash/redis";
 import { getTokenMarkets } from "@/lib/dexscreener";
 import {
   createPaperScanRecord,
+  collectPaperTradeOutcomes,
   emptyPaperJournal,
   evaluatePaperJournal,
   JOURNAL_RECORD_WINDOW_DAYS,
@@ -14,6 +15,7 @@ import type {
   ChartModelSnapshot,
   PaperJournalSnapshot,
   PaperScanRecord,
+  PaperTradeOutcome,
   PortfolioSnapshot,
   StrategyPlan,
   TrendScoutSnapshot,
@@ -165,6 +167,16 @@ export async function getPaperJournalSnapshot(
       "記録ストレージへ接続できませんでした。実売買はロックされたままです。",
     );
   }
+}
+
+export async function getPaperJournalExportOutcomes(
+  walletAddress: string,
+  nowMs = Date.now(),
+): Promise<PaperTradeOutcome[]> {
+  const redis = getRedis();
+  if (!redis) throw new Error("Paper journal storage is unavailable.");
+  const records = await readRecords(redis, walletAddress, nowMs);
+  return collectPaperTradeOutcomes(records, nowMs);
 }
 
 export async function recordPaperScan(

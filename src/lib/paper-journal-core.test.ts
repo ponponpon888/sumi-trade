@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { compareStrategies } from "@/lib/chart-model";
 import {
   calculateOperationalReadiness,
+  collectPaperTradeOutcomes,
   createPaperScanRecord,
   evaluatePaperJournal,
   MINIMUM_OBSERVATION_HOURS,
@@ -226,6 +227,22 @@ describe("paper journal", () => {
     expect(result.winRate).toBe(100);
     expect(result.netPnlUsd).toBe(18);
     expect(result.executionLocked).toBe(true);
+  });
+
+  it("collects settled outcomes for the 30-day audit export", () => {
+    const now = Date.UTC(2026, 8, 7, 7);
+    const outcomes = collectPaperTradeOutcomes(
+      [
+        recordAt(-31 * 24, 80, "BUY"),
+        recordAt(-31 * 24 + 6, 90, null),
+        recordAt(0, 100, "BUY"),
+        recordAt(6, 110, null),
+      ],
+      now,
+    );
+
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({ symbol: "TEST", netPnlUsd: 18 });
   });
 
   it("scores falling prices as a win for a sell signal", () => {

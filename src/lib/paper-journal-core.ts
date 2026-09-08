@@ -291,6 +291,30 @@ function settleSignal(
   };
 }
 
+export function collectPaperTradeOutcomes(
+  inputRecords: PaperScanRecord[],
+  nowMs = Date.now(),
+): PaperTradeOutcome[] {
+  const analyticsWindowStart =
+    nowMs - JOURNAL_ANALYTICS_WINDOW_DAYS * ONE_DAY_MS;
+  const recordWindowStart =
+    nowMs - JOURNAL_RECORD_WINDOW_DAYS * ONE_DAY_MS;
+  const records = inputRecords
+    .filter(
+      (record) =>
+        record.schemaVersion === 1 &&
+        record.executionLocked === true &&
+        record.bucketTimeMs >= recordWindowStart &&
+        record.bucketTimeMs <= nowMs,
+    )
+    .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
+
+  return selectIndependentSignals(records)
+    .map((candidate) => settleSignal(candidate, records))
+    .filter((outcome): outcome is PaperTradeOutcome => outcome !== null)
+    .filter((outcome) => outcomeTimeMs(outcome) >= analyticsWindowStart);
+}
+
 type SignalCandidate = {
   record: PaperScanRecord;
   signal: PaperSignalObservation;
@@ -666,8 +690,6 @@ export function evaluatePaperJournal(
   inputRecords: PaperScanRecord[],
   nowMs = Date.now(),
 ): PaperJournalSnapshot {
-  const analyticsWindowStart =
-    nowMs - JOURNAL_ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
   const recordWindowStart =
     nowMs - JOURNAL_RECORD_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
   const analyticsRecords = inputRecords
@@ -687,15 +709,8 @@ export function evaluatePaperJournal(
   const outcomes = candidates
     .map((candidate) => settleSignal(candidate, records))
     .filter((outcome): outcome is PaperTradeOutcome => outcome !== null);
-  const analyticsCandidates = selectIndependentSignals(analyticsRecords);
-  const analyticsOutcomes = analyticsCandidates
-    .map((candidate) => settleSignal(candidate, analyticsRecords))
-    .filter((outcome): outcome is PaperTradeOutcome => outcome !== null)
-    .filter(
-      (outcome) =>
-        signalModel(outcome) === "chart" &&
-        outcomeTimeMs(outcome) >= analyticsWindowStart,
-    );
+  const analyticsOutcomes = collectPaperTradeOutcomes(analyticsRecords, nowMs)
+    .filter((outcome) => signalModel(outcome) === "chart");
   const startingCapital = records[0]?.portfolioValueUsd ?? 0;
   const analyticsStartingCapital =
     analyticsRecords[0]?.portfolioValueUsd ?? startingCapital;

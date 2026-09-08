@@ -143,7 +143,14 @@ export function PaperControls({
         >
           {isScanning ? "スキャン中…" : isRefreshing ? "更新中…" : "今すぐ紙上スキャン"}
         </button>
-        <span className="execution-lock">EXECUTION LOCKED</span>
+        <a
+          className="execution-lock"
+          href={journalStatus === "disabled" ? undefined : "/api/paper/export"}
+          aria-disabled={journalStatus === "disabled"}
+          style={{ justifyContent: "center", textDecoration: "none" }}
+        >
+          EXPORT 30D CSV · LOCKED
+        </a>
       </div>
       <p className={`control-note ${isAlert ? "is-alert" : ""}`} aria-live="polite">
         {scanMessage ?? (isAlert ? journalMessage || copy.detail : copy.detail)}
