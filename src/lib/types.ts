@@ -324,7 +324,7 @@ export interface PortfolioRiskAssessment {
 
 export interface ModelDriftAssessment {
   model: PaperSignalModel;
-  status: "stable" | "degraded" | "collecting" | "unavailable";
+  status: "stable" | "degraded" | "recovering" | "collecting" | "unavailable";
   blockNewBuys: boolean;
   recentDays: 7;
   baselineDays: 23;
@@ -336,6 +336,8 @@ export interface ModelDriftAssessment {
   averageReturnDropPercentagePoints: number;
   recentProfitFactor: number | null;
   baselineProfitFactor: number | null;
+  recoveryConfirmationHours: 12;
+  recoveryConfirmationPassed: boolean;
   limits: {
     minimumRecentSamples: 10;
     minimumBaselineSamples: 20;
@@ -539,6 +541,11 @@ export interface PaperDriftWindowPerformance {
 export interface PaperDriftPerformance {
   recent: PaperDriftWindowPerformance;
   baseline: PaperDriftWindowPerformance;
+  confirmation?: {
+    offsetHours: 12;
+    recent: PaperDriftWindowPerformance;
+    baseline: PaperDriftWindowPerformance;
+  };
 }
 
 export interface PaperAssetPerformance {

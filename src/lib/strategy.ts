@@ -33,6 +33,8 @@ const DEFAULT_MODEL_DRIFT: ModelDriftSnapshot = {
     averageReturnDropPercentagePoints: 0,
     recentProfitFactor: null,
     baselineProfitFactor: null,
+    recoveryConfirmationHours: 12,
+    recoveryConfirmationPassed: false,
     limits: {
       minimumRecentSamples: 10,
       minimumBaselineSamples: 20,
@@ -56,6 +58,8 @@ const DEFAULT_MODEL_DRIFT: ModelDriftSnapshot = {
     averageReturnDropPercentagePoints: 0,
     recentProfitFactor: null,
     baselineProfitFactor: null,
+    recoveryConfirmationHours: 12,
+    recoveryConfirmationPassed: false,
     limits: {
       minimumRecentSamples: 10,
       minimumBaselineSamples: 20,

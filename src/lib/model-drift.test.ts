@@ -93,6 +93,36 @@ describe("model drift", () => {
     expect(result.reasons[0]).toContain("PF");
   });
 
+  it("keeps BUY blocked for 12 hours while a degraded model confirms recovery", () => {
+    const input = journal();
+    input.driftPerformanceByModel.chart.confirmation = {
+      offsetHours: 12,
+      recent: performance(7, 12, -1.1, -55, 0.6),
+      baseline: performance(30, 35, 0.8, 90, 1.4),
+    };
+
+    expect(assessModelDrift(input, "chart")).toMatchObject({
+      status: "recovering",
+      blockNewBuys: true,
+      recoveryConfirmationPassed: false,
+    });
+  });
+
+  it("reopens BUY only after the current and 12-hour confirmation windows are stable", () => {
+    const input = journal();
+    input.driftPerformanceByModel.chart.confirmation = {
+      offsetHours: 12,
+      recent: performance(7, 12, 0.4, 18, 1.25),
+      baseline: performance(30, 35, 0.7, 80, 1.5),
+    };
+
+    expect(assessModelDrift(input, "chart")).toMatchObject({
+      status: "stable",
+      blockNewBuys: false,
+      recoveryConfirmationPassed: true,
+    });
+  });
+
   it("treats missing storage as unavailable and fails closed", () => {
     const result = assessModelDrift(
       journal(undefined, undefined, {

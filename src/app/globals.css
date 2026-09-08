@@ -1816,6 +1816,11 @@ a {
   color: var(--red);
 }
 
+.model-drift-status-recovering {
+  border-color: rgba(255, 189, 89, 0.48);
+  color: var(--amber);
+}
+
 .model-drift-status-collecting,
 .model-drift-status-unavailable {
   border-color: rgba(255, 189, 89, 0.48);
@@ -1856,6 +1861,15 @@ a {
 .model-drift-metrics small,
 .model-drift-reasons > span {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.model-drift-reasons > small {
+  color: #626b64;
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  margin-top: 10px;
 }
 
 .model-drift-card-heading > div span {
@@ -1942,6 +1956,11 @@ a {
 .model-drift-card-degraded .model-drift-reasons > span,
 .model-drift-card-degraded .model-drift-reasons li::before {
   color: var(--red);
+}
+
+.model-drift-card-recovering .model-drift-reasons > span,
+.model-drift-card-recovering .model-drift-reasons li::before {
+  color: var(--amber);
 }
 
 .model-drift-card-collecting .model-drift-reasons > span,

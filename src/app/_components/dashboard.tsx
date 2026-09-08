@@ -892,6 +892,7 @@ const portfolioRiskLabels = {
 const modelDriftLabels = {
   stable: "STABLE",
   degraded: "BUY BLOCK",
+  recovering: "RECOVERY HOLD",
   collecting: "COLLECTING",
   unavailable: "DATA WAIT",
 } as const;
@@ -944,6 +945,9 @@ function DriftModelCard({
       <div className="model-drift-reasons">
         <span>{drift.blockNewBuys ? "BUY GATE CLOSED" : "BUY GATE OBSERVE"}</span>
         <ul>{drift.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+        <small>
+          RECOVERY CHECK {drift.recoveryConfirmationHours}H / {drift.recoveryConfirmationPassed ? "PASSED" : "PENDING"}
+        </small>
       </div>
     </article>
   );
@@ -955,6 +959,8 @@ function ModelDriftBoard({ drift }: { drift: ModelDriftSnapshot }) {
     ? "unavailable"
     : assessments.some((item) => item.status === "degraded")
       ? "degraded"
+      : assessments.some((item) => item.status === "recovering")
+        ? "recovering"
       : assessments.some((item) => item.status === "collecting")
         ? "collecting"
         : "stable";
@@ -969,8 +975,8 @@ function ModelDriftBoard({ drift }: { drift: ModelDriftSnapshot }) {
           <span className="section-index">05 / MODEL DRIFT</span>
           <h2 id="model-drift-title">悪化したモデルだけを、切り離す。</h2>
           <p>
-            チャートとコミュニティトレンドを別々に7日対30日で比較します。
-            悪化した側の新規BUYだけを停止し、正常なモデルとSELL経路は維持します。
+            チャートとコミュニティトレンドを別々に直近7日対直前23日で比較します。
+            悪化した側は12時間の回復確認後にだけ再開し、正常なモデルとSELL経路は維持します。
           </p>
         </div>
         <span className={`portfolio-risk-status model-drift-status-${status}`}>
@@ -1237,7 +1243,7 @@ export function Dashboard({
               <li><i className="checked" />BUY／SELL双方向見積</li>
               <li><i className="checked" />価格影響上限超を停止</li>
               <li><i className="checked" />集中・相関・24時間損失ゲート</li>
-              <li><i className="checked" />7日対30日のモデル劣化ゲート</li>
+              <li><i className="checked" />7日対23日・12時間復旧確認ゲート</li>
               <li><i className="checked" />15分超の価格履歴を停止</li>
               <li><i className="checked" />永続緊急停止・決定ID重複防止</li>
               <li><i className="checked" />0.005 ETHを固定</li>
@@ -1249,7 +1255,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.13</span>
+          <span>SUMI TRADE LAB / BUILD 1.14</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

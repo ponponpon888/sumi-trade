@@ -570,20 +570,34 @@ function driftPerformance(
   nowMs: number,
   startingCapital: number,
 ): PaperDriftPerformance {
-  const recentCutoff = nowMs - 7 * 24 * 60 * 60 * 1_000;
-  const baselineCutoff = nowMs - 30 * 24 * 60 * 60 * 1_000;
+  const window = (anchorMs: number) => {
+    const recentCutoff = anchorMs - 7 * 24 * 60 * 60 * 1_000;
+    const baselineCutoff = anchorMs - 30 * 24 * 60 * 60 * 1_000;
+    return {
+      recent: driftWindowMetrics(
+        outcomes.filter((outcome) => {
+          const timestamp = outcomeTimeMs(outcome);
+          return timestamp >= recentCutoff && timestamp <= anchorMs;
+        }),
+        startingCapital,
+      ),
+      baseline: driftWindowMetrics(
+        outcomes.filter((outcome) => {
+          const timestamp = outcomeTimeMs(outcome);
+          return timestamp >= baselineCutoff && timestamp < recentCutoff;
+        }),
+        startingCapital,
+      ),
+    };
+  };
+  const current = window(nowMs);
+  const confirmation = window(nowMs - 12 * 60 * 60 * 1_000);
   return {
-    recent: driftWindowMetrics(
-      outcomes.filter((outcome) => outcomeTimeMs(outcome) >= recentCutoff),
-      startingCapital,
-    ),
-    baseline: driftWindowMetrics(
-      outcomes.filter((outcome) => {
-        const timestamp = outcomeTimeMs(outcome);
-        return timestamp >= baselineCutoff && timestamp < recentCutoff;
-      }),
-      startingCapital,
-    ),
+    ...current,
+    confirmation: {
+      offsetHours: 12,
+      ...confirmation,
+    },
   };
 }
 
