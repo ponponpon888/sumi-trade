@@ -266,6 +266,7 @@ describe("paper journal", () => {
       decisionId: `${first.id}:chart:TEST:BUY`,
       direction: "BUY",
       marketRegime: "uptrend",
+      decisionReasons: ["test"],
       notionalUsd: 200,
     });
   });

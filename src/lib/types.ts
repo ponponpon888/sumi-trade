@@ -443,6 +443,7 @@ export interface PaperSignalObservation {
   modelScore: number;
   confidence: number;
   marketRegime?: MarketRegime;
+  decisionReasons?: string[];
   notionalUsd: number;
   estimatedCostUsd: number;
   costGatePassed: boolean;

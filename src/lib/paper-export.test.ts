@@ -16,6 +16,8 @@ function outcome(patch: Partial<PaperTradeOutcome> = {}): PaperTradeOutcome {
     entryPriceUsd: 1,
     modelScore: 72,
     confidence: 68,
+    marketRegime: "uptrend",
+    decisionReasons: ["5分・15分・1時間が上向き", "コストゲート通過"],
     notionalUsd: 50,
     estimatedCostUsd: 2,
     costGatePassed: true,
@@ -35,7 +37,9 @@ describe("paper outcome CSV", () => {
     const csv = buildPaperOutcomeCsv([outcome()]);
 
     expect(csv.startsWith("\uFEFFsignal_time,")).toBe(true);
-    expect(csv).toContain("decision-1,SUMI,BUY,1,1.1,50,2,10,6,3,true,true,true");
+    expect(csv).toContain(
+      "decision-1,SUMI,BUY,72,68,uptrend,5分・15分・1時間が上向き | コストゲート通過,1,1.1,50,2,10,6,3,true,true,true",
+    );
     expect(csv.endsWith("\r\n")).toBe(true);
   });
 

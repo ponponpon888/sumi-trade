@@ -981,14 +981,35 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
             <small>{journal.scanCount} SCANS / {journal.pendingCount} PENDING</small>
           </div>
           {journal.recentOutcomes.length ? (
-            <div className="outcome-list">
+            <div className="outcome-list outcome-audit-list">
               {journal.recentOutcomes.map((outcome) => (
-                <div key={`${outcome.symbol}-${outcome.signalTime}`}>
-                  <span className={`signal signal-${outcome.direction.toLowerCase()}`}>{outcome.direction}</span>
-                  <strong>{outcome.symbol}</strong>
-                  <span>{outcome.netReturnPercent >= 0 ? "+" : ""}{outcome.netReturnPercent.toFixed(2)}%</span>
-                  <strong className={outcome.won ? "positive" : "negative"}>{outcome.netPnlUsd >= 0 ? "+" : ""}{formatUsd(outcome.netPnlUsd)}</strong>
-                </div>
+                <article key={outcome.decisionId ?? `${outcome.symbol}-${outcome.signalTime}`}>
+                  <div className="outcome-audit-summary">
+                    <span className={`signal signal-${outcome.direction.toLowerCase()}`}>{outcome.direction}</span>
+                    <div>
+                      <strong>{outcome.symbol}</strong>
+                      <small>{outcome.model === "community-trend" ? "COMMUNITY TREND" : "CORE CHART"}</small>
+                    </div>
+                    <span>{outcome.netReturnPercent >= 0 ? "+" : ""}{outcome.netReturnPercent.toFixed(2)}%</span>
+                    <strong className={outcome.won ? "positive" : "negative"}>{outcome.netPnlUsd >= 0 ? "+" : ""}{formatUsd(outcome.netPnlUsd)}</strong>
+                  </div>
+                  <dl className="outcome-audit-metrics">
+                    <div><dt>SCORE</dt><dd>{outcome.modelScore.toFixed(0)}</dd></div>
+                    <div><dt>CONF.</dt><dd>{outcome.confidence.toFixed(0)}</dd></div>
+                    <div><dt>ENTRY</dt><dd>{formatUsd(outcome.entryPriceUsd)}</dd></div>
+                    <div><dt>6H EXIT</dt><dd>{formatUsd(outcome.exitPriceUsd)}</dd></div>
+                    <div><dt>COST</dt><dd>{formatUsd(outcome.estimatedCostUsd)}</dd></div>
+                  </dl>
+                  <div className="outcome-audit-reasons">
+                    <span>DECISION REASONS</span>
+                    {outcome.decisionReasons?.length ? (
+                      <ul>{outcome.decisionReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                    ) : (
+                      <small>旧レコードのため判断理由は保存されていません。</small>
+                    )}
+                  </div>
+                  <small className="outcome-audit-id">{outcome.decisionId ?? "LEGACY DECISION"} · {new Date(outcome.signalTime).toISOString()}</small>
+                </article>
               ))}
             </div>
           ) : (
@@ -1376,7 +1397,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.17</span>
+          <span>SUMI TRADE LAB / BUILD 1.18</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

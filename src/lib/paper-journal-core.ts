@@ -52,6 +52,15 @@ function finitePositive(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function compactDecisionReasons(...groups: Array<Array<string | undefined>>): string[] {
+  return [...new Set(
+    groups
+      .flat()
+      .map((reason) => reason?.trim())
+      .filter((reason): reason is string => Boolean(reason)),
+  )].slice(0, 5);
+}
+
 export function calculateOperationalReadiness(
   records: PaperScanRecord[],
   nowMs: number,
@@ -183,6 +192,12 @@ export function createPaperScanRecord(
       modelScore: analysis.score,
       confidence: analysis.confidence,
       marketRegime: analysis.regime?.regime,
+      decisionReasons: compactDecisionReasons(
+        [analysis.summary],
+        analysis.reasons,
+        analysis.regime?.reasons ?? [],
+        [planned?.reason],
+      ),
       notionalUsd: round(Math.max(plannedNotional, modelNotional)),
       estimatedCostUsd: round(analysis.risk.estimatedRoundTripCostUsd),
       costGatePassed: analysis.risk.costGatePassed,
@@ -202,6 +217,9 @@ export function createPaperScanRecord(
   const rotation = data.trendScout?.paperRotation;
   if (rotation && finitePositive(rotation.entryPriceUsd)) {
     const priceKey = rotation.toContractAddress.toLowerCase();
+    const candidate = data.trendScout?.candidates.find(
+      (item) => item.contractAddress.toLowerCase() === priceKey,
+    );
     prices[priceKey] = rotation.entryPriceUsd;
     signals.push({
       decisionId: `${recordId}:community-trend:${priceKey}:BUY`,
@@ -213,6 +231,7 @@ export function createPaperScanRecord(
       entryPriceUsd: rotation.entryPriceUsd,
       modelScore: rotation.score,
       confidence: rotation.score,
+      decisionReasons: compactDecisionReasons(candidate?.reasons ?? []),
       notionalUsd: rotation.amountUsd,
       estimatedCostUsd: rotation.estimatedRoundTripCostUsd,
       costGatePassed: rotation.costGatePassed,
