@@ -46,6 +46,7 @@ function asset(symbol: string, valueUsd: number): PortfolioAsset {
     dexId: null,
     contractSafety: null,
     quotePreflight: null,
+    onchainPreflight: null,
   };
 }
 

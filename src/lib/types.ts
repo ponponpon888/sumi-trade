@@ -225,6 +225,18 @@ export interface MarketData {
   priceChange24h: number | null;
 }
 
+export interface OnchainPreflightAssessment {
+  status: "pass" | "blocked" | "unavailable";
+  readOnly: true;
+  chainId: number | null;
+  blockNumber: number | null;
+  blockTimestamp: string | null;
+  blockAgeSeconds: number | null;
+  contractCodePresent: boolean | null;
+  checkedAt: string;
+  reasons: string[];
+}
+
 export interface PortfolioAsset {
   symbol: string;
   name: string;
@@ -242,6 +254,7 @@ export interface PortfolioAsset {
   dexId: string | null;
   contractSafety: ContractSafetyAssessment | null;
   quotePreflight: PreflightAssessment | null;
+  onchainPreflight: OnchainPreflightAssessment | null;
 }
 
 export interface PortfolioSnapshot {

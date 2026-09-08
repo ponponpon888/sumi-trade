@@ -11,6 +11,7 @@ import {
   getContractSafetyAssessments,
 } from "@/lib/blockscout";
 import { getTokenMarkets } from "@/lib/dexscreener";
+import { getOnchainPreflightAssessments } from "@/lib/ethereum-preflight";
 import { asFiniteNumber, unitsToNumber } from "@/lib/number";
 import { getQuotePreflightAssessments } from "@/lib/kyberswap";
 import {
@@ -78,10 +79,11 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     rawBalanceByAddress.has(policy.contractAddress.toLowerCase()),
   );
   const heldAddresses = heldPolicies.map((policy) => policy.contractAddress);
-  const [markets, safetyByAddress, preflightByAddress] = await Promise.all([
+  const [markets, safetyByAddress, preflightByAddress, onchainByAddress] = await Promise.all([
     getTokenMarkets([...heldAddresses, WRAPPED_ETH_ADDRESS]),
     getContractSafetyAssessments(heldAddresses),
     getQuotePreflightAssessments(heldAddresses, ethPrice),
+    getOnchainPreflightAssessments(heldAddresses),
   ]);
 
   const assets: PortfolioAsset[] = heldPolicies.map((policy) => {
@@ -117,6 +119,7 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       dexId: market?.dexId ?? null,
       contractSafety: safetyByAddress.get(normalizedAddress) ?? null,
       quotePreflight: preflightByAddress.get(normalizedAddress) ?? null,
+      onchainPreflight: onchainByAddress.get(normalizedAddress) ?? null,
     };
   });
 
@@ -140,6 +143,7 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     dexId: ethMarket?.dexId ?? null,
     contractSafety: null,
     quotePreflight: null,
+    onchainPreflight: null,
   });
 
   assets.sort((left, right) => right.valueUsd - left.valueUsd);
@@ -150,7 +154,8 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       (asset) =>
         ["eligible", "thin"].includes(asset.tradability) &&
         asset.contractSafety?.status === "pass" &&
-        asset.quotePreflight?.status === "pass",
+        asset.quotePreflight?.status === "pass" &&
+        asset.onchainPreflight?.status === "pass",
     )
     .reduce((total, asset) => total + asset.valueUsd, 0);
   const blockedUsd = assets
@@ -158,7 +163,8 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       (asset) =>
         asset.tradability === "blocked" ||
         (asset.contractSafety !== null && asset.contractSafety.status !== "pass") ||
-        (asset.quotePreflight !== null && asset.quotePreflight.status !== "pass"),
+        (asset.quotePreflight !== null && asset.quotePreflight.status !== "pass") ||
+        (asset.onchainPreflight !== null && asset.onchainPreflight.status !== "pass"),
     )
     .reduce((total, asset) => total + asset.valueUsd, 0);
   const ignoredTokenCount = tokenBalances.filter(
@@ -194,6 +200,15 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
   if (preflightBlockedCount > 0) {
     warnings.push(
       `${preflightBlockedCount}銘柄はBUY／SELL双方向見積を通過できず、新規BUYを停止しました。`,
+    );
+  }
+  const onchainBlockedCount = assets.filter(
+    (asset) =>
+      asset.onchainPreflight !== null && asset.onchainPreflight.status !== "pass",
+  ).length;
+  if (onchainBlockedCount > 0) {
+    warnings.push(
+      `${onchainBlockedCount}銘柄はオンチェーン状態確認を通過できず、新規BUYを停止しました。`,
     );
   }
 

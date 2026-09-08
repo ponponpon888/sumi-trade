@@ -104,6 +104,19 @@ function draftSignal(
     };
   }
 
+  if (asset.contractAddress && asset.onchainPreflight?.status !== "pass") {
+    return {
+      asset,
+      action: "HOLD",
+      allocationPercent: 0,
+      reason: asset.onchainPreflight
+        ? `オンチェーン状態${asset.onchainPreflight.status.toUpperCase()}。${asset.onchainPreflight.reasons[0] ?? "新規BUYを停止"}`
+        : "オンチェーン状態確認がないため新規BUYを停止",
+      modelScore: chart.score,
+      costGatePassed: false,
+    };
+  }
+
   if (
     chart.direction === "BUY" &&
     chart.backtest.robustness.status !== "pass"

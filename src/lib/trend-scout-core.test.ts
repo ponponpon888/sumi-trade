@@ -62,6 +62,7 @@ function snapshot(): PortfolioSnapshot {
       dexId: null,
       contractSafety: PASS_SAFETY,
       quotePreflight: PASS_PREFLIGHT,
+      onchainPreflight: null,
     }],
   };
 }

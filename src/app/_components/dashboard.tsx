@@ -65,6 +65,12 @@ const preflightLabels = {
   unavailable: "ROUTE UNKNOWN",
 } as const;
 
+const onchainPreflightLabels = {
+  pass: "CHAIN PASS",
+  blocked: "CHAIN BLOCK",
+  unavailable: "CHAIN WAIT",
+} as const;
+
 function shortAddress(address: string): string {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
 }
@@ -121,6 +127,11 @@ function AssetRow({
         {asset.quotePreflight ? (
           <span className={`preflight-chip preflight-${asset.quotePreflight.status}`}>
             {preflightLabels[asset.quotePreflight.status]}
+          </span>
+        ) : null}
+        {asset.onchainPreflight ? (
+          <span className={`preflight-chip preflight-${asset.onchainPreflight.status}`}>
+            {onchainPreflightLabels[asset.onchainPreflight.status]}
           </span>
         ) : null}
       </div>
@@ -974,7 +985,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-        <span>SUMI TRADE LAB / BUILD 1.2</span>
+          <span>SUMI TRADE LAB / BUILD 1.3</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

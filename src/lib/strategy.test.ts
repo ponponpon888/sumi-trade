@@ -70,6 +70,17 @@ function asset(overrides: Partial<PortfolioAsset> = {}): PortfolioAsset {
       quoteTtlSeconds: 30,
       reasons: ["test"],
     },
+    onchainPreflight: {
+      status: "pass",
+      readOnly: true,
+      chainId: 1,
+      blockNumber: 25_000_000,
+      blockTimestamp: "2026-09-08T00:00:00.000Z",
+      blockAgeSeconds: 12,
+      contractCodePresent: true,
+      checkedAt: "2026-09-08T00:00:12.000Z",
+      reasons: ["test"],
+    },
     ...overrides,
   };
 }
@@ -264,6 +275,36 @@ describe("createStrategyPlan", () => {
       },
     });
     const plan = createStrategyPlan(snapshot([unsellable]), [chart("SELL")], PASS_PORTFOLIO_RISK);
+
+    expect(plan.signals[0].action).toBe("SELL");
+  });
+
+  it("blocks a new buy when the onchain state is unavailable", () => {
+    const unavailable = asset({
+      onchainPreflight: {
+        ...asset().onchainPreflight!,
+        status: "unavailable",
+        chainId: null,
+        blockNumber: null,
+        contractCodePresent: null,
+        reasons: ["Ethereum RPC応答が不完全"],
+      },
+    });
+    const plan = createStrategyPlan(snapshot([unavailable]), [chart("BUY")], PASS_PORTFOLIO_RISK);
+
+    expect(plan.signals[0]).toMatchObject({ action: "HOLD", costGatePassed: false });
+    expect(plan.signals[0].reason).toContain("Ethereum RPC応答が不完全");
+  });
+
+  it("keeps the exit path open when the onchain state check is blocked", () => {
+    const blocked = asset({
+      onchainPreflight: {
+        ...asset().onchainPreflight!,
+        status: "blocked",
+        reasons: ["最新ブロックが遅延"],
+      },
+    });
+    const plan = createStrategyPlan(snapshot([blocked]), [chart("SELL")], PASS_PORTFOLIO_RISK);
 
     expect(plan.signals[0].action).toBe("SELL");
   });
