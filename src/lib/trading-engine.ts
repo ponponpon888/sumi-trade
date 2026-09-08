@@ -9,6 +9,7 @@ import {
 import { getPoolOhlcv } from "@/lib/ohlcv";
 import { normalizeCandles } from "@/lib/indicators";
 import { getPaperJournalSnapshot } from "@/lib/paper-journal";
+import { assessModelDrift } from "@/lib/model-drift";
 import { getPortfolioSnapshot } from "@/lib/portfolio";
 import { assessPortfolioRisk } from "@/lib/portfolio-risk";
 import {
@@ -140,18 +141,23 @@ export async function getTradingDashboardData(): Promise<{
     assessPortfolioRisk(snapshot, chartModel, journal),
     safetyControl,
   );
+  const modelDrift = assessModelDrift(journal);
   const plan = createStrategyPlan(
     snapshot,
     chartModel.analyses,
     portfolioRisk,
+    modelDrift,
   );
-  const trendScout = portfolioRisk.blockNewBuys
+  const blockTrendBuy = portfolioRisk.blockNewBuys || modelDrift.blockNewBuys;
+  const trendScout = blockTrendBuy
     ? {
         ...rawTrendScout,
         paperRotation: null,
         warnings: [
           ...rawTrendScout.warnings,
-          `ポートフォリオリスク${portfolioRisk.status.toUpperCase()}: ${portfolioRisk.reasons[0]}`,
+          modelDrift.blockNewBuys
+            ? `モデル劣化${modelDrift.status.toUpperCase()}: ${modelDrift.reasons[0]}`
+            : `ポートフォリオリスク${portfolioRisk.status.toUpperCase()}: ${portfolioRisk.reasons[0]}`,
         ],
       }
     : rawTrendScout;

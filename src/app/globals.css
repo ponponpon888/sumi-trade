@@ -1805,6 +1805,23 @@ a {
   color: var(--amber);
 }
 
+.model-drift-status-stable {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #080a09;
+}
+
+.model-drift-status-degraded {
+  border-color: rgba(255, 101, 95, 0.48);
+  color: var(--red);
+}
+
+.model-drift-status-collecting,
+.model-drift-status-unavailable {
+  border-color: rgba(255, 189, 89, 0.48);
+  color: var(--amber);
+}
+
 .portfolio-risk-metrics {
   background: linear-gradient(135deg, rgba(200, 255, 61, 0.04), transparent 48%), var(--surface);
   border: 1px solid var(--line);
@@ -1870,6 +1887,15 @@ a {
   color: var(--amber);
 }
 
+.model-drift-degraded .portfolio-risk-reasons > span {
+  color: var(--red);
+}
+
+.model-drift-collecting .portfolio-risk-reasons > span,
+.model-drift-unavailable .portfolio-risk-reasons > span {
+  color: var(--amber);
+}
+
 .portfolio-risk-reasons ul {
   display: grid;
   gap: 7px;
@@ -1895,6 +1921,15 @@ a {
 }
 
 .portfolio-risk-unavailable .portfolio-risk-reasons li::before {
+  color: var(--amber);
+}
+
+.model-drift-degraded .portfolio-risk-reasons li::before {
+  color: var(--red);
+}
+
+.model-drift-collecting .portfolio-risk-reasons li::before,
+.model-drift-unavailable .portfolio-risk-reasons li::before {
   color: var(--amber);
 }
 

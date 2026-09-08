@@ -5,10 +5,34 @@ import { createStrategyPlan } from "@/lib/strategy";
 import type {
   ChartAnalysis,
   ChartDirection,
+  ModelDriftAssessment,
   PortfolioAsset,
   PortfolioRiskAssessment,
   PortfolioSnapshot,
 } from "@/lib/types";
+
+const DEGRADED_MODEL: ModelDriftAssessment = {
+  status: "degraded",
+  blockNewBuys: true,
+  recentDays: 7,
+  baselineDays: 30,
+  recentSamples: 12,
+  baselineSamples: 35,
+  recentNetPnlUsd: -50,
+  recentAverageNetReturnPercent: -1,
+  baselineAverageNetReturnPercent: 0.8,
+  averageReturnDropPercentagePoints: 1.8,
+  recentProfitFactor: 0.6,
+  baselineProfitFactor: 1.4,
+  limits: {
+    minimumRecentSamples: 10,
+    minimumBaselineSamples: 30,
+    averageReturnDropPercentagePoints: 1.5,
+    recentProfitFactor: 0.8,
+    baselineProfitFactor: 1.2,
+  },
+  reasons: ["7日平均リターンが30日基準から1.8ポイント低下"],
+};
 
 const PASS_PORTFOLIO_RISK: PortfolioRiskAssessment = {
   status: "pass",
@@ -380,6 +404,29 @@ describe("createStrategyPlan", () => {
       action: "SELL",
       allocationPercent: 35,
     });
+  });
+
+  it("turns BUY into HOLD when model performance degrades", () => {
+    const plan = createStrategyPlan(
+      snapshot([asset()]),
+      [chart("BUY")],
+      PASS_PORTFOLIO_RISK,
+      DEGRADED_MODEL,
+    );
+
+    expect(plan.signals[0]).toMatchObject({ action: "HOLD", costGatePassed: false });
+    expect(plan.signals[0].reason).toContain("モデル劣化DEGRADED");
+  });
+
+  it("keeps SELL available when model performance degrades", () => {
+    const plan = createStrategyPlan(
+      snapshot([asset()]),
+      [chart("SELL")],
+      PASS_PORTFOLIO_RISK,
+      DEGRADED_MODEL,
+    );
+
+    expect(plan.signals[0].action).toBe("SELL");
   });
 
   it("keeps a liquid asset on hold when chart history is absent", () => {

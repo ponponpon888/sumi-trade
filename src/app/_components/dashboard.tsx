@@ -5,6 +5,7 @@ import { formatAmount, formatUsd } from "@/lib/number";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  ModelDriftAssessment,
   PaperJournalSnapshot,
   PaperModelPerformance,
   PortfolioAsset,
@@ -887,6 +888,72 @@ const portfolioRiskLabels = {
   unavailable: "DATA WAIT",
 } as const;
 
+const modelDriftLabels = {
+  stable: "STABLE",
+  degraded: "BUY BLOCK",
+  collecting: "COLLECTING",
+  unavailable: "DATA WAIT",
+} as const;
+
+function ModelDriftBoard({ drift }: { drift: ModelDriftAssessment }) {
+  const gapClass =
+    drift.averageReturnDropPercentagePoints >=
+    drift.limits.averageReturnDropPercentagePoints
+      ? "negative"
+      : "";
+
+  return (
+    <section
+      className={`portfolio-risk-board model-drift-board model-drift-${drift.status} shell`}
+      aria-labelledby="model-drift-title"
+    >
+      <div className="portfolio-risk-heading">
+        <div>
+          <span className="section-index">05 / MODEL DRIFT</span>
+          <h2 id="model-drift-title">直近の崩れを、BUY前に止める。</h2>
+          <p>
+            7日成績を30日基準と比較し、十分な件数と明確な悪化が揃った場合だけ新規BUYを停止します。
+            収集中は追加停止せず、SELL経路とPAPER MODEは常に維持します。
+          </p>
+        </div>
+        <span className={`portfolio-risk-status model-drift-status-${drift.status}`}>
+          {modelDriftLabels[drift.status]}
+        </span>
+      </div>
+
+      <div className="portfolio-risk-metrics">
+        <div>
+          <span>7D AVG RETURN</span>
+          <strong>{drift.recentSamples ? signedPercent(drift.recentAverageNetReturnPercent) : "—"}</strong>
+          <small>{drift.recentSamples}/{drift.limits.minimumRecentSamples} SETTLED</small>
+        </div>
+        <div>
+          <span>30D BASELINE</span>
+          <strong>{drift.baselineSamples ? signedPercent(drift.baselineAverageNetReturnPercent) : "—"}</strong>
+          <small>{drift.baselineSamples}/{drift.limits.minimumBaselineSamples} SETTLED</small>
+        </div>
+        <div>
+          <span>RETURN GAP</span>
+          <strong className={gapClass}>{drift.averageReturnDropPercentagePoints.toFixed(2)}PT</strong>
+          <small>BLOCK LINE {drift.limits.averageReturnDropPercentagePoints.toFixed(1)}PT + NEGATIVE P/L</small>
+        </div>
+        <div>
+          <span>7D / 30D PF</span>
+          <strong>
+            {drift.recentProfitFactor === null ? "—" : drift.recentProfitFactor.toFixed(2)} / {drift.baselineProfitFactor === null ? "—" : drift.baselineProfitFactor.toFixed(2)}
+          </strong>
+          <small>RECENT &lt; {drift.limits.recentProfitFactor.toFixed(1)} / BASE ≥ {drift.limits.baselineProfitFactor.toFixed(1)}</small>
+        </div>
+      </div>
+
+      <div className="portfolio-risk-reasons">
+        <span>{drift.blockNewBuys ? "BUY GATE CLOSED" : "BUY GATE OBSERVE"}</span>
+        <ul>{drift.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      </div>
+    </section>
+  );
+}
+
 function PortfolioRiskBoard({ risk }: { risk: PortfolioRiskAssessment }) {
   const pnlClass =
     risk.dailyNetPnlUsd > 0
@@ -902,7 +969,7 @@ function PortfolioRiskBoard({ risk }: { risk: PortfolioRiskAssessment }) {
     >
       <div className="portfolio-risk-heading">
         <div>
-          <span className="section-index">05 / PORTFOLIO RISK</span>
+          <span className="section-index">06 / PORTFOLIO RISK</span>
           <h2 id="portfolio-risk-title">銘柄ではなく、資産全体で止める。</h2>
           <p>
             集中・相関・ETH連動・24時間損失・連敗を新規BUYの前に検査します。
@@ -1063,13 +1130,15 @@ export function Dashboard({
 
       <PaperJournalBoard journal={journal} />
 
+      <ModelDriftBoard drift={plan.modelDrift} />
+
       <PortfolioRiskBoard risk={plan.portfolioRisk} />
 
       <section className="workspace shell">
         <div className="portfolio-panel panel">
           <div className="panel-heading">
             <div>
-              <span className="section-index">06 / WALLET</span>
+              <span className="section-index">07 / WALLET</span>
               <h2>保有資産と実行判定</h2>
             </div>
             <span className="count-badge">{snapshot.assets.length} ASSETS</span>
@@ -1088,7 +1157,7 @@ export function Dashboard({
           <div className="panel signal-panel">
             <div className="panel-heading compact">
               <div>
-              <span className="section-index">07 / ORDERS</span>
+              <span className="section-index">08 / ORDERS</span>
                 <h2>紙上オーダー</h2>
               </div>
               <span className="live-indicator"><i /> LIVE DATA</span>
@@ -1129,7 +1198,7 @@ export function Dashboard({
           />
 
           <div className="panel safety-panel">
-            <span className="section-index">08 / SAFETY</span>
+            <span className="section-index">09 / SAFETY</span>
             <h2>実行ガード</h2>
             <ul>
               <li><i className="checked" />外部送金を禁止</li>
@@ -1137,6 +1206,7 @@ export function Dashboard({
               <li><i className="checked" />BUY／SELL双方向見積</li>
               <li><i className="checked" />価格影響上限超を停止</li>
               <li><i className="checked" />集中・相関・24時間損失ゲート</li>
+              <li><i className="checked" />7日対30日のモデル劣化ゲート</li>
               <li><i className="checked" />15分超の価格履歴を停止</li>
               <li><i className="checked" />永続緊急停止・決定ID重複防止</li>
               <li><i className="checked" />0.005 ETHを固定</li>
@@ -1148,7 +1218,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.10</span>
+          <span>SUMI TRADE LAB / BUILD 1.11</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

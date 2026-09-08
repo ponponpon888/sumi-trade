@@ -322,12 +322,36 @@ export interface PortfolioRiskAssessment {
   reasons: string[];
 }
 
+export interface ModelDriftAssessment {
+  status: "stable" | "degraded" | "collecting" | "unavailable";
+  blockNewBuys: boolean;
+  recentDays: 7;
+  baselineDays: 30;
+  recentSamples: number;
+  baselineSamples: number;
+  recentNetPnlUsd: number;
+  recentAverageNetReturnPercent: number;
+  baselineAverageNetReturnPercent: number;
+  averageReturnDropPercentagePoints: number;
+  recentProfitFactor: number | null;
+  baselineProfitFactor: number | null;
+  limits: {
+    minimumRecentSamples: 10;
+    minimumBaselineSamples: 30;
+    averageReturnDropPercentagePoints: 1.5;
+    recentProfitFactor: 0.8;
+    baselineProfitFactor: 1.2;
+  };
+  reasons: string[];
+}
+
 export interface StrategyPlan {
   mode: "paper";
   generatedAt: string;
   cadenceMinutes: 5;
   executionLocked: true;
   portfolioRisk: PortfolioRiskAssessment;
+  modelDrift: ModelDriftAssessment;
   signals: StrategySignal[];
   summary: {
     buyCount: number;

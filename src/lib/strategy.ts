@@ -1,5 +1,6 @@
 import type {
   ChartAnalysis,
+  ModelDriftAssessment,
   PortfolioAsset,
   PortfolioRiskAssessment,
   PortfolioSnapshot,
@@ -16,6 +17,29 @@ interface DraftSignal {
   modelScore: number | null;
   costGatePassed: boolean | null;
 }
+
+const DEFAULT_MODEL_DRIFT: ModelDriftAssessment = {
+  status: "collecting",
+  blockNewBuys: false,
+  recentDays: 7,
+  baselineDays: 30,
+  recentSamples: 0,
+  baselineSamples: 0,
+  recentNetPnlUsd: 0,
+  recentAverageNetReturnPercent: 0,
+  baselineAverageNetReturnPercent: 0,
+  averageReturnDropPercentagePoints: 0,
+  recentProfitFactor: null,
+  baselineProfitFactor: null,
+  limits: {
+    minimumRecentSamples: 10,
+    minimumBaselineSamples: 30,
+    averageReturnDropPercentagePoints: 1.5,
+    recentProfitFactor: 0.8,
+    baselineProfitFactor: 1.2,
+  },
+  reasons: ["判定サンプルを収集中"],
+};
 
 function draftSignal(
   asset: PortfolioAsset,
@@ -167,13 +191,24 @@ export function createStrategyPlan(
   snapshot: PortfolioSnapshot,
   chartAnalyses: ChartAnalysis[] = [],
   portfolioRisk: PortfolioRiskAssessment,
+  modelDrift: ModelDriftAssessment = DEFAULT_MODEL_DRIFT,
 ): StrategyPlan {
   const chartBySymbol = new Map(
     chartAnalyses.map((analysis) => [analysis.symbol, analysis]),
   );
   const drafts = snapshot.assets.map((asset) => {
     const draft = draftSignal(asset, chartBySymbol);
-    if (draft.action !== "BUY" || !portfolioRisk.blockNewBuys) return draft;
+    if (draft.action !== "BUY") return draft;
+    if (modelDrift.blockNewBuys) {
+      return {
+        ...draft,
+        action: "HOLD" as const,
+        allocationPercent: 0,
+        reason: `モデル劣化${modelDrift.status.toUpperCase()}。${modelDrift.reasons[0]}`,
+        costGatePassed: false,
+      };
+    }
+    if (!portfolioRisk.blockNewBuys) return draft;
     return {
       ...draft,
       action: "HOLD" as const,
@@ -239,6 +274,7 @@ export function createStrategyPlan(
     cadenceMinutes: 5,
     executionLocked: true,
     portfolioRisk,
+    modelDrift,
     signals,
     summary: {
       buyCount: count("BUY"),

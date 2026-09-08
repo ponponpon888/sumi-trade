@@ -172,6 +172,28 @@ function data(price: number, direction: "BUY" | "SELL") {
       },
       reasons: ["test"],
     },
+    modelDrift: {
+      status: "collecting",
+      blockNewBuys: false,
+      recentDays: 7,
+      baselineDays: 30,
+      recentSamples: 0,
+      baselineSamples: 0,
+      recentNetPnlUsd: 0,
+      recentAverageNetReturnPercent: 0,
+      baselineAverageNetReturnPercent: 0,
+      averageReturnDropPercentagePoints: 0,
+      recentProfitFactor: null,
+      baselineProfitFactor: null,
+      limits: {
+        minimumRecentSamples: 10,
+        minimumBaselineSamples: 30,
+        averageReturnDropPercentagePoints: 1.5,
+        recentProfitFactor: 0.8,
+        baselineProfitFactor: 1.2,
+      },
+      reasons: ["test"],
+    },
     signals: [
       {
         symbol: "TEST",
