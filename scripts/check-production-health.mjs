@@ -44,9 +44,12 @@ const failures = [];
 if (health.mode !== "paper") failures.push("MODE_NOT_PAPER");
 if (health.executionLocked !== true) failures.push("EXECUTION_NOT_LOCKED");
 if (health.configurationStatus !== "pass") {
-  failures.push(...(health.runtimeConfiguration?.missingOrInvalid ?? ["CONFIGURATION"]));
+  failures.push("CONFIGURATION_NOT_PASS");
 }
 if (health.safetyStatus === "unavailable") failures.push("SAFETY_UNAVAILABLE");
+if (!["monitoring", "stopped", "unavailable"].includes(health.safetyStatus)) {
+  failures.push("SAFETY_STATUS_INVALID");
+}
 if (health.paperEngineStatus !== "live") failures.push("PAPER_ENGINE_NOT_LIVE");
 
 const summary = {
