@@ -1,0 +1,468 @@
+export type Tradability = "eligible" | "thin" | "blocked" | "gas";
+export type SignalAction = "BUY" | "SELL" | "HOLD" | "BLOCK";
+export type ChartDirection = "BUY" | "SELL" | "HOLD";
+export type ChartStatus = "ready" | "insufficient" | "unavailable";
+export type TrendDirection = "bullish" | "neutral" | "bearish";
+export type Timeframe = "5m" | "15m" | "1h";
+export type MarketRegime =
+  | "uptrend"
+  | "downtrend"
+  | "range"
+  | "high-volatility"
+  | "low-liquidity";
+export type RegimeStrategy =
+  | "trend-following"
+  | "mean-reversion"
+  | "capital-preservation"
+  | "risk-off"
+  | "blocked";
+export type ContractSafetyStatus =
+  | "pass"
+  | "review"
+  | "blocked"
+  | "unavailable";
+
+export interface ContractSafetyAssessment {
+  status: ContractSafetyStatus;
+  source: "blockscout";
+  verified: boolean | null;
+  isContract: boolean | null;
+  isScam: boolean | null;
+  isProxy: boolean | null;
+  implementationAddress: string | null;
+  erc20InterfacePassed: boolean | null;
+  privilegedFunctions: string[];
+  reasons: string[];
+}
+
+export interface PreflightRoute {
+  amountIn: string;
+  amountOut: string;
+  amountInUsd: number;
+  amountOutUsd: number;
+  gasUsd: number;
+  exchanges: string[];
+  hopCount: number;
+  quotedAt: string;
+}
+
+export interface PreflightAssessment {
+  status: "pass" | "blocked" | "unavailable";
+  provider: "kyberswap";
+  testAmountUsd: number;
+  buy: PreflightRoute | null;
+  sell: PreflightRoute | null;
+  roundTripRetentionPercent: number | null;
+  roundTripLossPercent: number | null;
+  quoteTtlSeconds: 30;
+  reasons: string[];
+}
+
+export interface ChartMarketContext {
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+}
+
+export interface RegimeAssessment {
+  regime: MarketRegime;
+  strategy: RegimeStrategy;
+  confidence: number;
+  riskMultiplier: number;
+  reasons: string[];
+}
+
+export interface ExecutionCostEstimate {
+  mode: "base-estimate" | "liquidity-aware";
+  liquidityUsd: number | null;
+  positionToLiquidityPercent: number | null;
+  estimatedPriceImpactPercent: number;
+  estimatedOneWaySlippagePercent: number;
+  estimatedGasUsd: number;
+  estimatedSlippageUsd: number;
+  estimatedRoundTripCostUsd: number;
+  priceImpactGatePassed: boolean;
+}
+
+export interface OhlcvCandle {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface TimeframeIndicators {
+  timeframe: Timeframe;
+  candleCount: number;
+  close: number | null;
+  emaFast: number | null;
+  emaSlow: number | null;
+  rsi14: number | null;
+  atrPercent: number | null;
+  volumeRatio: number | null;
+  trend: TrendDirection;
+}
+
+export interface BacktestResult {
+  status: "ready" | "insufficient" | "no-trades";
+  executionModel: "next-open-conservative";
+  candleCount: number;
+  tradeCount: number;
+  winRate: number;
+  netReturnPercent: number;
+  benchmarkReturnPercent: number;
+  excessReturnPercent: number;
+  expectancyPercent: number;
+  maxDrawdownPercent: number;
+  profitFactor: number | null;
+  tradeSharpeRatio: number | null;
+  tradeSortinoRatio: number | null;
+  robustness: {
+    status: "pass" | "review" | "insufficient";
+    simulationCount: number;
+    tradeCount: number;
+    profitablePathRate: number;
+    medianReturnPercent: number;
+    fifthPercentileReturnPercent: number;
+    ninetyFifthPercentileDrawdownPercent: number;
+    riskOfRuinPercent: number;
+    costSensitivity: Array<{
+      multiplier: 1 | 1.5 | 2;
+      netReturnPercent: number;
+    }>;
+    reasons: string[];
+  };
+  walkForward: {
+    status: "ready" | "insufficient" | "no-trades";
+    windowCount: number;
+    profitableWindowRate: number;
+    tradeCount: number;
+    netReturnPercent: number;
+    maxDrawdownPercent: number;
+  };
+}
+
+export type StrategyComparisonId =
+  | "sumi-regime"
+  | "ema-trend"
+  | "rsi-reversion";
+
+export interface StrategyComparisonResult {
+  id: StrategyComparisonId;
+  name: string;
+  family: "regime" | "trend" | "mean-reversion";
+  status: BacktestResult["status"];
+  executionModel: "next-open-conservative";
+  tradeCount: number;
+  netReturnPercent: number;
+  outOfSampleReturnPercent: number;
+  maxDrawdownPercent: number;
+  profitFactor: number | null;
+  excessReturnPercent: number;
+  rank: number;
+}
+
+export interface StrategyComparisonSnapshot {
+  status: "ready" | "insufficient";
+  candleCount: number;
+  benchmarkReturnPercent: number;
+  leaderId: StrategyComparisonId | null;
+  researchOnly: true;
+  results: StrategyComparisonResult[];
+  notes: string[];
+}
+
+export interface ChartRiskPlan {
+  stopLossPercent: number;
+  takeProfitPercent: number;
+  trailingStopPercent: number;
+  positionSizePercent: number;
+  estimatedRoundTripCostUsd: number;
+  expectedGrossProfitUsd: number;
+  costGatePassed: boolean;
+  execution: ExecutionCostEstimate;
+}
+
+export interface ChartAnalysis {
+  symbol: string;
+  status: ChartStatus;
+  direction: ChartDirection;
+  score: number;
+  confidence: number;
+  summary: string;
+  reasons: string[];
+  lastPrice: number | null;
+  sparkline: number[];
+  timeframes: TimeframeIndicators[];
+  regime: RegimeAssessment | null;
+  risk: ChartRiskPlan | null;
+  backtest: BacktestResult;
+  strategyComparison: StrategyComparisonSnapshot;
+}
+
+export interface ChartModelSnapshot {
+  generatedAt: string;
+  source: "geckoterminal";
+  cadenceMinutes: 5;
+  requestedAssetCount: number;
+  readyAssetCount: number;
+  analyses: ChartAnalysis[];
+  ethBenchmark: {
+    status: "ready" | "unavailable";
+    sparkline: number[];
+  };
+  warnings: string[];
+}
+
+export interface MarketData {
+  dexId: string;
+  pairAddress: string;
+  pairUrl: string;
+  priceUsd: number | null;
+  liquidityUsd: number;
+  volume24hUsd: number;
+  priceChange24h: number | null;
+}
+
+export interface PortfolioAsset {
+  symbol: string;
+  name: string;
+  contractAddress: string | null;
+  amount: number;
+  priceUsd: number | null;
+  valueUsd: number;
+  liquidityUsd: number | null;
+  volume24hUsd: number | null;
+  priceChange24h: number | null;
+  tradability: Tradability;
+  reason: string;
+  pairUrl: string | null;
+  pairAddress: string | null;
+  dexId: string | null;
+  contractSafety: ContractSafetyAssessment | null;
+  quotePreflight: PreflightAssessment | null;
+}
+
+export interface PortfolioSnapshot {
+  walletAddress: string;
+  generatedAt: string;
+  source: "blockscout+dexscreener";
+  totalUsd: number;
+  tradeableUsd: number;
+  blockedUsd: number;
+  gasBalanceEth: number;
+  gasBalanceUsd: number;
+  gasReserveEth: number;
+  assets: PortfolioAsset[];
+  ignoredTokenCount: number;
+  warnings: string[];
+}
+
+export interface StrategySignal {
+  symbol: string;
+  action: SignalAction;
+  allocationPercent: number;
+  estimatedUsd: number;
+  reason: string;
+  modelScore: number | null;
+  costGatePassed: boolean | null;
+}
+
+export interface PortfolioCorrelationPair {
+  leftSymbol: string;
+  rightSymbol: string;
+  correlation: number;
+  combinedExposurePercent: number;
+}
+
+export interface PortfolioRiskAssessment {
+  status: "pass" | "blocked" | "unavailable";
+  blockNewBuys: boolean;
+  maxSingleAssetSymbol: string | null;
+  maxSingleAssetPercent: number;
+  maxEthCorrelation: number | null;
+  maxEthCorrelationSymbol: string | null;
+  highCorrelationPairs: PortfolioCorrelationPair[];
+  dailyNetPnlUsd: number;
+  dailyLossPercent: number;
+  longestLossStreak: number;
+  limits: {
+    singleAssetPercent: 35;
+    correlatedExposurePercent: 50;
+    correlation: 0.85;
+    dailyLossPercent: 3;
+    lossStreak: 3;
+  };
+  reasons: string[];
+}
+
+export interface StrategyPlan {
+  mode: "paper";
+  generatedAt: string;
+  cadenceMinutes: 5;
+  executionLocked: true;
+  portfolioRisk: PortfolioRiskAssessment;
+  signals: StrategySignal[];
+  summary: {
+    buyCount: number;
+    sellCount: number;
+    holdCount: number;
+    blockedCount: number;
+  };
+}
+
+export type TrendDecision = "PAPER" | "WATCH" | "BLOCK";
+
+export interface TrendCandidate {
+  rank: number;
+  contractAddress: string;
+  pairAddress: string;
+  name: string;
+  symbol: string;
+  priceUsd: number;
+  liquidityUsd: number;
+  volume24hUsd: number;
+  priceChange1h: number;
+  priceChange6h: number;
+  priceChange24h: number;
+  buyers24h: number;
+  sellers24h: number;
+  sentimentPositivePercentage: number | null;
+  suspiciousReportCount: number;
+  poolAgeDays: number;
+  score: number;
+  decision: TrendDecision;
+  reasons: string[];
+  contractSafety: ContractSafetyAssessment;
+  quotePreflight: PreflightAssessment;
+}
+
+export interface TrendPaperRotation {
+  fromSymbol: string;
+  fromContractAddress: string;
+  toSymbol: string;
+  toContractAddress: string;
+  entryPriceUsd: number;
+  amountUsd: number;
+  allocationPercent: number;
+  estimatedRoundTripCostUsd: number;
+  estimatedPriceImpactPercent: number;
+  estimatedOneWaySlippagePercent: number;
+  costGatePassed: boolean;
+  score: number;
+  executionLocked: true;
+}
+
+export interface TrendScoutSnapshot {
+  generatedAt: string;
+  source: "geckoterminal";
+  mode: "shadow";
+  executionLocked: true;
+  candidateCount: number;
+  paperCandidateCount: number;
+  candidates: TrendCandidate[];
+  paperRotation: TrendPaperRotation | null;
+  warnings: string[];
+}
+
+export type PaperJournalStatus =
+  | "disabled"
+  | "collecting"
+  | "qualified"
+  | "rejected"
+  | "error";
+
+export type PaperSignalModel = "chart" | "community-trend";
+
+export interface PaperSignalObservation {
+  model?: PaperSignalModel;
+  priceKey?: string;
+  contractAddress?: string;
+  symbol: string;
+  direction: Exclude<ChartDirection, "HOLD">;
+  entryPriceUsd: number;
+  modelScore: number;
+  confidence: number;
+  notionalUsd: number;
+  estimatedCostUsd: number;
+  costGatePassed: boolean;
+}
+
+export interface PaperScanRecord {
+  schemaVersion: 1;
+  id: string;
+  bucketTimeMs: number;
+  generatedAt: string;
+  walletAddress: string;
+  portfolioValueUsd: number;
+  executionLocked: true;
+  prices: Record<string, number>;
+  signals: PaperSignalObservation[];
+}
+
+export interface PaperTradeOutcome extends PaperSignalObservation {
+  signalTime: string;
+  outcomeTime: string;
+  exitPriceUsd: number;
+  grossReturnPercent: number;
+  netReturnPercent: number;
+  netPnlUsd: number;
+  won: boolean;
+}
+
+export interface PaperQualification {
+  minimumSamples: number;
+  samplePassed: boolean;
+  netProfitPassed: boolean;
+  profitFactorPassed: boolean;
+  drawdownPassed: boolean;
+  costCoveragePassed: boolean;
+  overallPassed: boolean;
+}
+
+export interface PaperModelPerformance {
+  model: PaperSignalModel;
+  signalCount: number;
+  maturedCount: number;
+  pendingCount: number;
+  costGatePassedCount: number;
+  costGatePassRate: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+  profitFactor: number | null;
+  maxDrawdownUsd: number;
+  maxDrawdownPercent: number;
+  longestLossStreak: number;
+  qualification: PaperQualification;
+}
+
+export interface PaperJournalSnapshot {
+  status: PaperJournalStatus;
+  storageConfigured: boolean;
+  executionLocked: true;
+  windowDays: 7;
+  horizonHours: 6;
+  startedAt: string | null;
+  lastScanAt: string | null;
+  scanCount: number;
+  signalCount: number;
+  maturedCount: number;
+  pendingCount: number;
+  costGatePassedCount: number;
+  costGatePassRate: number;
+  winRate: number;
+  netPnlUsd: number;
+  dailyNetPnlUsd: number;
+  dailyLossPercent: number;
+  averageNetReturnPercent: number;
+  profitFactor: number | null;
+  maxDrawdownUsd: number;
+  maxDrawdownPercent: number;
+  longestLossStreak: number;
+  qualification: PaperQualification;
+  modelPerformance: Record<PaperSignalModel, PaperModelPerformance>;
+  recentOutcomes: PaperTradeOutcome[];
+  message: string;
+}

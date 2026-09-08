@@ -1,0 +1,982 @@
+import type { ReactNode } from "react";
+
+import { PaperControls } from "@/app/_components/paper-controls";
+import { formatAmount, formatUsd } from "@/lib/number";
+import type {
+  ChartAnalysis,
+  ChartModelSnapshot,
+  PaperJournalSnapshot,
+  PaperModelPerformance,
+  PortfolioAsset,
+  PortfolioRiskAssessment,
+  PortfolioSnapshot,
+  StrategyPlan,
+  StrategySignal,
+  TrendCandidate,
+  TrendScoutSnapshot,
+} from "@/lib/types";
+
+const statusLabels = {
+  eligible: "AUTO OK",
+  thin: "QUOTE ONLY",
+  blocked: "BLOCKED",
+  gas: "RESERVE",
+} as const;
+
+const actionLabels = {
+  BUY: "BUY",
+  SELL: "SELL",
+  HOLD: "HOLD",
+  BLOCK: "BLOCK",
+} as const;
+
+const trendLabels = {
+  bullish: "上昇",
+  neutral: "中立",
+  bearish: "下降",
+} as const;
+
+const regimeLabels = {
+  uptrend: "上昇トレンド",
+  downtrend: "下降トレンド",
+  range: "レンジ",
+  "high-volatility": "高ボラティリティ",
+  "low-liquidity": "低流動性",
+} as const;
+
+const regimeStrategyLabels = {
+  "trend-following": "順張り",
+  "mean-reversion": "平均回帰",
+  "capital-preservation": "資産保全",
+  "risk-off": "リスクオフ",
+  blocked: "売買停止",
+} as const;
+
+const contractSafetyLabels = {
+  pass: "CONTRACT PASS",
+  review: "CONTRACT REVIEW",
+  blocked: "CONTRACT BLOCK",
+  unavailable: "CONTRACT UNKNOWN",
+} as const;
+
+const preflightLabels = {
+  pass: "ROUTE PASS",
+  blocked: "ROUTE BLOCK",
+  unavailable: "ROUTE UNKNOWN",
+} as const;
+
+function shortAddress(address: string): string {
+  return `${address.slice(0, 8)}…${address.slice(-6)}`;
+}
+
+function signedPercent(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function AssetRow({
+  asset,
+  signal,
+}: {
+  asset: PortfolioAsset;
+  signal: StrategySignal | undefined;
+}) {
+  const change = asset.priceChange24h;
+  return (
+    <article className="asset-row">
+      <div className="asset-identity">
+        <span className={`token-mark token-${asset.symbol.toLowerCase()}`}>
+          {asset.symbol.slice(0, 2)}
+        </span>
+        <div>
+          <strong>{asset.symbol}</strong>
+          <span>{asset.name}</span>
+        </div>
+      </div>
+      <div className="asset-balance">
+        <strong>{formatUsd(asset.valueUsd)}</strong>
+        <span>{formatAmount(asset.amount)} {asset.symbol}</span>
+      </div>
+      <div className="asset-market">
+        <strong className={change === null ? "muted" : change >= 0 ? "positive" : "negative"}>
+          {change === null ? "—" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`}
+        </strong>
+        <span>24H</span>
+      </div>
+      <div className="asset-liquidity">
+        <strong>{asset.liquidityUsd === null ? "—" : formatUsd(asset.liquidityUsd)}</strong>
+        <span>流動性</span>
+      </div>
+      <div className="asset-decision">
+        <span className={`status-chip status-${asset.tradability}`}>
+          {statusLabels[asset.tradability]}
+        </span>
+        <span className={`signal signal-${signal?.action.toLowerCase() ?? "hold"}`}>
+          {signal ? actionLabels[signal.action] : "HOLD"}
+        </span>
+        {asset.contractSafety ? (
+          <span className={`contract-chip contract-${asset.contractSafety.status}`}>
+            {contractSafetyLabels[asset.contractSafety.status]}
+          </span>
+        ) : null}
+        {asset.quotePreflight ? (
+          <span className={`preflight-chip preflight-${asset.quotePreflight.status}`}>
+            {preflightLabels[asset.quotePreflight.status]}
+          </span>
+        ) : null}
+      </div>
+      <p className="asset-reason">{signal?.reason ?? asset.reason}</p>
+      {asset.pairUrl ? (
+        <a className="market-link" href={asset.pairUrl} target="_blank" rel="noreferrer">
+          市場を確認 ↗
+        </a>
+      ) : null}
+    </article>
+  );
+}
+
+function PriceSparkline({
+  values,
+  direction,
+}: {
+  values: number[];
+  direction: ChartAnalysis["direction"];
+}) {
+  if (values.length < 2) {
+    return <div className="sparkline-empty">NO CHART DATA</div>;
+  }
+
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const range = maximum - minimum || 1;
+  const points = values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * 100;
+      const y = 34 - ((value - minimum) / range) * 30;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg
+      className={`sparkline sparkline-${direction.toLowerCase()}`}
+      viewBox="0 0 100 38"
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="直近48本の5分足終値"
+    >
+      <line x1="0" y1="34" x2="100" y2="34" />
+      <polyline points={points} />
+    </svg>
+  );
+}
+
+function ModelCard({ analysis }: { analysis: ChartAnalysis }) {
+  const directionClass = analysis.direction.toLowerCase();
+
+  return (
+    <article className={`model-card model-${directionClass}`}>
+      <div className="model-card-head">
+        <div>
+          <span>MODEL / {analysis.symbol}</span>
+          <strong>{analysis.symbol}</strong>
+        </div>
+        <span className={`signal signal-${directionClass}`}>
+          {analysis.status === "ready" ? analysis.direction : "NO DATA"}
+        </span>
+      </div>
+
+      <div className="model-score-row">
+        <div className="model-score">
+          <strong>{analysis.score}</strong>
+          <span>/ 100</span>
+        </div>
+        <div className="score-track" aria-label={`複合スコア ${analysis.score}`}>
+          <i style={{ width: `${analysis.score}%` }} />
+        </div>
+        <small>確信度 {analysis.confidence}%</small>
+      </div>
+
+      <PriceSparkline values={analysis.sparkline} direction={analysis.direction} />
+
+      {analysis.timeframes.length > 0 ? (
+        <div className="timeframe-grid">
+          {analysis.timeframes.map((timeframe) => (
+            <div key={timeframe.timeframe}>
+              <span>{timeframe.timeframe}</span>
+              <strong className={`trend-${timeframe.trend}`}>
+                {trendLabels[timeframe.trend]}
+              </strong>
+              <small>
+                RSI {timeframe.rsi14 === null ? "—" : timeframe.rsi14.toFixed(1)}
+              </small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {analysis.regime ? (
+        <div className={`regime-strip regime-${analysis.regime.regime}`}>
+          <div>
+            <span>MARKET REGIME</span>
+            <strong>{regimeLabels[analysis.regime.regime]}</strong>
+          </div>
+          <div>
+            <span>ACTIVE STRATEGY</span>
+            <strong>{regimeStrategyLabels[analysis.regime.strategy]}</strong>
+          </div>
+          <div>
+            <span>REGIME CONF.</span>
+            <strong>{analysis.regime.confidence.toFixed(0)}%</strong>
+          </div>
+          <div>
+            <span>RISK SCALE</span>
+            <strong>×{analysis.regime.riskMultiplier.toFixed(2)}</strong>
+          </div>
+        </div>
+      ) : null}
+
+      <p className="model-summary">{analysis.summary}</p>
+
+      <div className="model-stats">
+        <div>
+          <span>BACKTEST</span>
+          <strong className={analysis.backtest.netReturnPercent >= 0 ? "positive" : "negative"}>
+            {analysis.backtest.status === "insufficient"
+              ? "—"
+              : `${analysis.backtest.netReturnPercent >= 0 ? "+" : ""}${analysis.backtest.netReturnPercent.toFixed(2)}%`}
+          </strong>
+          <small>{analysis.backtest.tradeCount} trades</small>
+        </div>
+        <div>
+          <span>WIN RATE</span>
+          <strong>
+            {analysis.backtest.tradeCount > 0
+              ? `${analysis.backtest.winRate.toFixed(1)}%`
+              : "—"}
+          </strong>
+          <small>過去約60時間</small>
+        </div>
+        <div>
+          <span>COST GATE</span>
+          <strong className={analysis.risk?.costGatePassed ? "positive" : "negative"}>
+            {analysis.risk ? (analysis.risk.costGatePassed ? "PASS" : "WAIT") : "—"}
+          </strong>
+          <small>
+            {analysis.risk
+              ? `$${analysis.risk.estimatedRoundTripCostUsd.toFixed(2)} 往復`
+              : "履歴待ち"}
+          </small>
+        </div>
+      </div>
+
+      <div className="research-stats" aria-label="検証指標">
+        <div>
+          <span>ROLLING OOS</span>
+          <strong className={analysis.backtest.walkForward.netReturnPercent >= 0 ? "positive" : "negative"}>
+            {analysis.backtest.walkForward.status === "insufficient"
+              ? "—"
+              : signedPercent(analysis.backtest.walkForward.netReturnPercent)}
+          </strong>
+          <small>
+            {analysis.backtest.walkForward.windowCount} windows · {analysis.backtest.walkForward.profitableWindowRate.toFixed(0)}% positive
+          </small>
+        </div>
+        <div>
+          <span>EXCESS / HOLD</span>
+          <strong className={analysis.backtest.excessReturnPercent >= 0 ? "positive" : "negative"}>
+            {analysis.backtest.status === "insufficient"
+              ? "—"
+              : signedPercent(analysis.backtest.excessReturnPercent)}
+          </strong>
+          <small>cost-adjusted</small>
+        </div>
+        <div>
+          <span>EXPECTANCY</span>
+          <strong className={analysis.backtest.expectancyPercent >= 0 ? "positive" : "negative"}>
+            {analysis.backtest.tradeCount > 0
+              ? signedPercent(analysis.backtest.expectancyPercent)
+              : "—"}
+          </strong>
+          <small>per trade</small>
+        </div>
+        <div>
+          <span>TRADE SHARPE</span>
+          <strong>
+            {analysis.backtest.tradeSharpeRatio === null
+              ? "—"
+              : analysis.backtest.tradeSharpeRatio.toFixed(2)}
+          </strong>
+          <small>
+            SORTINO {analysis.backtest.tradeSortinoRatio === null
+              ? "—"
+              : analysis.backtest.tradeSortinoRatio.toFixed(2)}
+          </small>
+        </div>
+      </div>
+
+      <div
+        className={`robustness-strip robustness-${analysis.backtest.robustness.status}`}
+        aria-label="戦略耐久試験"
+      >
+        <div>
+          <span>ROBUSTNESS</span>
+          <strong>{analysis.backtest.robustness.status.toUpperCase()}</strong>
+          <small>
+            {analysis.backtest.robustness.simulationCount > 0
+              ? `${analysis.backtest.robustness.simulationCount.toLocaleString()} paths`
+              : analysis.backtest.robustness.reasons[0]}
+          </small>
+        </div>
+        <div>
+          <span>MONTE CARLO P5</span>
+          <strong>
+            {analysis.backtest.robustness.simulationCount > 0
+              ? signedPercent(analysis.backtest.robustness.fifthPercentileReturnPercent)
+              : "—"}
+          </strong>
+          <small>
+            {analysis.backtest.robustness.profitablePathRate.toFixed(1)}% profitable
+          </small>
+        </div>
+        <div>
+          <span>COST ×2</span>
+          <strong>
+            {analysis.backtest.robustness.simulationCount > 0
+              ? signedPercent(
+                  analysis.backtest.robustness.costSensitivity.at(-1)
+                    ?.netReturnPercent ?? 0,
+                )
+              : "—"}
+          </strong>
+          <small>
+            RUIN {analysis.backtest.robustness.riskOfRuinPercent.toFixed(1)}% · DD95 {analysis.backtest.robustness.ninetyFifthPercentileDrawdownPercent.toFixed(1)}%
+          </small>
+        </div>
+      </div>
+
+      {analysis.risk ? (
+        <div className="risk-line">
+          <span>SIZE {analysis.risk.positionSizePercent}%</span>
+          <span>STOP {analysis.risk.stopLossPercent}%</span>
+          <span>TAKE {analysis.risk.takeProfitPercent}%</span>
+          <span>
+            IMPACT {analysis.risk.execution.mode === "liquidity-aware"
+              ? `${analysis.risk.execution.estimatedPriceImpactPercent.toFixed(3)}%`
+              : "EST."}
+          </span>
+          <span>
+            SLIPPAGE {analysis.risk.execution.estimatedOneWaySlippagePercent.toFixed(3)}%
+          </span>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ChartModelBoard({ chartModel }: { chartModel: ChartModelSnapshot }) {
+  return (
+    <section className="model-board shell" aria-labelledby="model-title">
+      <div className="model-board-heading">
+        <div>
+          <span className="section-index">01 / CHART MODEL</span>
+          <h2 id="model-title">市場局面を選び、合う戦略だけを使う。</h2>
+          <p>市場局面を分類し、ローリングOOS・1,000経路の再標本化・コスト2倍ストレスを通過した戦略だけをBUY候補にします。</p>
+        </div>
+        <div className="model-coverage">
+          <strong>{chartModel.readyAssetCount}/{chartModel.requestedAssetCount}</strong>
+          <span>MODELS READY</span>
+        </div>
+      </div>
+
+      <div className="model-grid">
+        {chartModel.analyses.length > 0 ? (
+          chartModel.analyses.map((analysis) => (
+            <ModelCard key={analysis.symbol} analysis={analysis} />
+          ))
+        ) : (
+          <p className="model-empty">流動性基準を通過したチャート対象がありません。</p>
+        )}
+      </div>
+
+      {chartModel.warnings.length > 0 ? (
+        <div className="model-warning-list">
+          {chartModel.warnings.map((warning) => <p key={warning}>! {warning}</p>)}
+        </div>
+      ) : null}
+      <p className="backtest-disclaimer">モンテカルロは過去取引を復元抽出した耐久試験です。バックテストと同様に将来の利益・損失確率を保証しません。</p>
+    </section>
+  );
+}
+
+function StrategyComparisonBoard({ chartModel }: { chartModel: ChartModelSnapshot }) {
+  const comparable = chartModel.analyses.filter(
+    (analysis) => analysis.strategyComparison.status === "ready",
+  );
+
+  return (
+    <section className="strategy-lab shell" aria-labelledby="strategy-lab-title">
+      <div className="strategy-lab-heading">
+        <div>
+          <span className="section-index">02 / STRATEGY LAB</span>
+          <h2 id="strategy-lab-title">同じ相場で、戦略だけを入れ替える。</h2>
+          <p>
+            SUMIの局面判定、EMA 9/21順張り、RSI 30/70平均回帰を、同じ確定足・次足始値・ガス・スリッページ条件で比較します。
+            首位は研究結果であり、運用戦略を自動変更しません。
+          </p>
+        </div>
+        <span className="strategy-lab-mode">RESEARCH ONLY</span>
+      </div>
+
+      <div className="strategy-lab-grid">
+        {comparable.length > 0 ? (
+          comparable.map((analysis) => {
+            const comparison = analysis.strategyComparison;
+            return (
+              <article className="strategy-compare-card" key={analysis.symbol}>
+                <div className="strategy-compare-head">
+                  <div><span>ASSET</span><strong>{analysis.symbol}</strong></div>
+                  <div><span>BUY &amp; HOLD</span><strong>{signedPercent(comparison.benchmarkReturnPercent)}</strong></div>
+                </div>
+                <div className="strategy-compare-columns" aria-hidden="true">
+                  <span />
+                  <span>戦略</span>
+                  <span>OOS</span>
+                  <span>全期間</span>
+                  <span>MAX DD</span>
+                  <span>PF</span>
+                </div>
+                <div className="strategy-compare-list">
+                  {comparison.results.map((result) => (
+                    <div className={result.id === comparison.leaderId ? "is-leader" : ""} key={result.id}>
+                      <span className="strategy-rank">#{result.rank}</span>
+                      <div><strong>{result.name}</strong><small>{result.family}</small></div>
+                      <strong className={result.outOfSampleReturnPercent >= 0 ? "positive" : "negative"}>{signedPercent(result.outOfSampleReturnPercent)}</strong>
+                      <strong className={result.netReturnPercent >= 0 ? "positive" : "negative"}>{signedPercent(result.netReturnPercent)}</strong>
+                      <strong>{result.maxDrawdownPercent.toFixed(2)}%</strong>
+                      <strong>{result.profitFactor === null ? "—" : result.profitFactor.toFixed(2)}</strong>
+                    </div>
+                  ))}
+                </div>
+                <p>{comparison.notes.join(" · ")}</p>
+              </article>
+            );
+          })
+        ) : (
+          <p className="strategy-lab-empty">比較に必要な確定足を収集中です。</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+const trendDecisionLabels = {
+  PAPER: "PAPER",
+  WATCH: "WATCH",
+  BLOCK: "BLOCK",
+} as const;
+
+function TrendCandidateCard({ candidate }: { candidate: TrendCandidate }) {
+  return (
+    <article className={`trend-card trend-card-${candidate.decision.toLowerCase()}`}>
+      <div className="trend-card-head">
+        <div>
+          <span>RANK #{candidate.rank}</span>
+          <strong>{candidate.symbol}</strong>
+          <small>{candidate.name}</small>
+        </div>
+        <span className={`trend-decision trend-decision-${candidate.decision.toLowerCase()}`}>
+          {trendDecisionLabels[candidate.decision]}
+        </span>
+      </div>
+      <span className={`contract-chip contract-${candidate.contractSafety.status}`}>
+        {contractSafetyLabels[candidate.contractSafety.status]}
+      </span>
+      <span className={`preflight-chip preflight-${candidate.quotePreflight.status}`}>
+        {preflightLabels[candidate.quotePreflight.status]}
+        {candidate.quotePreflight.roundTripLossPercent !== null
+          ? ` · LOSS ${candidate.quotePreflight.roundTripLossPercent.toFixed(2)}%`
+          : ""}
+      </span>
+      <div className="trend-score-row">
+        <strong>{candidate.score}</strong><span>/ 100</span>
+        <i><b style={{ width: `${candidate.score}%` }} /></i>
+      </div>
+      <div className="trend-market-grid">
+        <div><span>1H</span><strong className={candidate.priceChange1h >= 0 ? "positive" : "negative"}>{candidate.priceChange1h >= 0 ? "+" : ""}{candidate.priceChange1h.toFixed(1)}%</strong></div>
+        <div><span>24H</span><strong className={candidate.priceChange24h >= 0 ? "positive" : "negative"}>{candidate.priceChange24h >= 0 ? "+" : ""}{candidate.priceChange24h.toFixed(1)}%</strong></div>
+        <div><span>LIQ</span><strong>{formatUsd(candidate.liquidityUsd)}</strong></div>
+        <div><span>VOL</span><strong>{formatUsd(candidate.volume24hUsd)}</strong></div>
+      </div>
+      <p>{candidate.reasons.slice(0, 2).join(" · ") || "安全ゲート評価中"}</p>
+    </article>
+  );
+}
+
+function TrendScoutBoard({ trendScout }: { trendScout: TrendScoutSnapshot }) {
+  const rotation = trendScout.paperRotation;
+
+  return (
+    <section className="trend-board shell" aria-labelledby="trend-title">
+      <div className="trend-heading">
+        <div>
+          <span className="section-index">03 / COMMUNITY TREND</span>
+          <h2 id="trend-title">話題性を拾い、安全ゲートで削る。</h2>
+          <p>
+            Ethereum注目プールを、コミュニティ反応・契約安全性・BUY／SELL双方向見積・流動性・過熱度で再採点。
+            合格しても紙上ローテーションだけを記録します。
+          </p>
+        </div>
+        <div className="trend-coverage">
+          <strong>{trendScout.paperCandidateCount}/{trendScout.candidateCount}</strong>
+          <span>PAPER CANDIDATES</span>
+        </div>
+      </div>
+
+      <div className="trend-rotation">
+        <div>
+          <span>SHADOW ROTATION</span>
+          <strong>{rotation ? `${rotation.fromSymbol} → ${rotation.toSymbol}` : "NO SAFE ROTATION"}</strong>
+          <small>
+            {rotation
+              ? `${formatUsd(rotation.amountUsd)} / 資産の${rotation.allocationPercent.toFixed(1)}% · IMPACT ${rotation.estimatedPriceImpactPercent.toFixed(3)}% · COST ${formatUsd(rotation.estimatedRoundTripCostUsd)}`
+              : "全ゲート通過銘柄または売却元資産を待っています。"}
+          </small>
+        </div>
+        <span className={`trend-cost-gate ${rotation?.costGatePassed ? "is-pass" : "is-wait"}`}>
+          {rotation ? (rotation.costGatePassed ? "COST PASS" : "COST BLOCK") : "PAPER ONLY"}
+        </span>
+      </div>
+
+      <div className="trend-grid">
+        {trendScout.candidates.length > 0 ? (
+          trendScout.candidates.map((candidate) => (
+            <TrendCandidateCard key={candidate.contractAddress} candidate={candidate} />
+          ))
+        ) : (
+          <p className="trend-empty">トレンド候補を取得できていません。既存モデルは継続します。</p>
+        )}
+      </div>
+
+      {trendScout.warnings.map((warning) => <p className="trend-warning" key={warning}>! {warning}</p>)}
+      <p className="trend-disclaimer">
+        トレンド順位は利益予測ではありません。全候補は紙上観測のみで、署名・承認・スワップ送信は実装していません。
+      </p>
+    </section>
+  );
+}
+
+const journalStatusLabels = {
+  disabled: "STORAGE OFF",
+  collecting: "COLLECTING",
+  qualified: "MODEL PASS",
+  rejected: "MODEL REJECT",
+  error: "STORAGE ERROR",
+} as const;
+
+function QualificationItem({ passed, children }: { passed: boolean; children: ReactNode }) {
+  return (
+    <li className={passed ? "qualification-pass" : "qualification-wait"}>
+      <i />{children}
+    </li>
+  );
+}
+
+function ModelPerformanceCard({
+  label,
+  description,
+  performance,
+}: {
+  label: string;
+  description: string;
+  performance: PaperModelPerformance;
+}) {
+  const pnlClass =
+    performance.netPnlUsd > 0
+      ? "positive"
+      : performance.netPnlUsd < 0
+        ? "negative"
+        : "muted";
+  const gateLabel = performance.qualification.overallPassed
+    ? "SWITCH READY"
+    : performance.maturedCount >= performance.qualification.minimumSamples
+      ? "REJECT"
+      : "COLLECTING";
+
+  return (
+    <article className="model-performance-card">
+      <div className="model-performance-head">
+        <div><span>{label}</span><small>{description}</small></div>
+        <strong className={performance.qualification.overallPassed ? "is-ready" : ""}>
+          {gateLabel}
+        </strong>
+      </div>
+      <div className="model-performance-stats">
+        <div><span>SETTLED</span><strong>{performance.maturedCount}</strong><small>/ {performance.qualification.minimumSamples}</small></div>
+        <div><span>WIN RATE</span><strong>{performance.maturedCount ? `${performance.winRate.toFixed(1)}%` : "—"}</strong></div>
+        <div><span>NET P/L</span><strong className={pnlClass}>{performance.maturedCount ? formatUsd(performance.netPnlUsd) : "—"}</strong></div>
+        <div><span>PF</span><strong>{performance.profitFactor === null ? "—" : performance.profitFactor.toFixed(2)}</strong></div>
+        <div><span>MAX DD</span><strong>{performance.maturedCount ? `${performance.maxDrawdownPercent.toFixed(2)}%` : "—"}</strong></div>
+      </div>
+    </article>
+  );
+}
+
+function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const progress = Math.min(
+    100,
+    (journal.maturedCount / journal.qualification.minimumSamples) * 100,
+  );
+  const netClass =
+    journal.netPnlUsd > 0 ? "positive" : journal.netPnlUsd < 0 ? "negative" : "muted";
+
+  return (
+    <section className="journal-board shell" aria-labelledby="journal-title">
+      <div className="journal-heading">
+        <div>
+          <span className="section-index">04 / FORWARD TEST</span>
+          <h2 id="journal-title">7日間、未来の値動きで採点する。</h2>
+          <p>
+            同じシグナルの連打を6時間抑制し、6時間後の価格で方向を判定。
+            ガス代・スリッページを引いた結果だけを合格判定に使います。
+          </p>
+        </div>
+        <span className={`journal-status journal-status-${journal.status}`}>
+          {journalStatusLabels[journal.status]}
+        </span>
+      </div>
+
+      <div className="journal-progress" aria-label={`採点済み ${journal.maturedCount} / ${journal.qualification.minimumSamples}`}>
+        <div>
+          <strong>{journal.maturedCount}</strong>
+          <span>/ {journal.qualification.minimumSamples} MINIMUM OUTCOMES</span>
+        </div>
+        <div className="journal-progress-track"><i style={{ width: `${progress}%` }} /></div>
+        <small>{journal.message}</small>
+      </div>
+
+      <div className="journal-metrics">
+        <div><span>WIN RATE</span><strong>{journal.maturedCount ? `${journal.winRate.toFixed(1)}%` : "—"}</strong><small>{journal.maturedCount} settled</small></div>
+        <div><span>NET PAPER P/L</span><strong className={netClass}>{journal.maturedCount ? formatUsd(journal.netPnlUsd) : "—"}</strong><small>cost included</small></div>
+        <div><span>PROFIT FACTOR</span><strong>{journal.profitFactor === null ? "—" : journal.profitFactor.toFixed(2)}</strong><small>target ≥ 1.20</small></div>
+        <div><span>MAX DRAWDOWN</span><strong>{journal.maturedCount ? `${journal.maxDrawdownPercent.toFixed(2)}%` : "—"}</strong><small>{journal.maturedCount ? formatUsd(journal.maxDrawdownUsd) : "no outcomes"}</small></div>
+        <div><span>LOSS STREAK</span><strong>{journal.maturedCount ? journal.longestLossStreak : "—"}</strong><small>consecutive</small></div>
+        <div><span>COST GATE</span><strong>{journal.signalCount ? `${journal.costGatePassRate.toFixed(1)}%` : "—"}</strong><small>{journal.costGatePassedCount}/{journal.signalCount} signals</small></div>
+      </div>
+
+      <div className="model-performance-grid" aria-label="モデル別フォワード成績">
+        <ModelPerformanceCard
+          label="CORE CHART"
+          description="保有銘柄・3時間軸モデル"
+          performance={journal.modelPerformance.chart}
+        />
+        <ModelPerformanceCard
+          label="COMMUNITY TREND"
+          description="外部トレンド・紙上スワップ"
+          performance={journal.modelPerformance["community-trend"]}
+        />
+      </div>
+
+      <div className="journal-lower">
+        <div className="qualification-card">
+          <span>MODEL PROMOTION GATE</span>
+          <ul>
+            <QualificationItem passed={journal.qualification.samplePassed}>30件以上を採点</QualificationItem>
+            <QualificationItem passed={journal.qualification.netProfitPassed}>コスト後損益がプラス</QualificationItem>
+            <QualificationItem passed={journal.qualification.profitFactorPassed}>PF 1.20以上</QualificationItem>
+            <QualificationItem passed={journal.qualification.drawdownPassed}>最大DD 8%以下</QualificationItem>
+            <QualificationItem passed={journal.qualification.costCoveragePassed}>コスト通過率70%以上</QualificationItem>
+          </ul>
+        </div>
+
+        <div className="outcome-card">
+          <div className="outcome-heading">
+            <span>RECENT 6H OUTCOMES</span>
+            <small>{journal.scanCount} SCANS / {journal.pendingCount} PENDING</small>
+          </div>
+          {journal.recentOutcomes.length ? (
+            <div className="outcome-list">
+              {journal.recentOutcomes.map((outcome) => (
+                <div key={`${outcome.symbol}-${outcome.signalTime}`}>
+                  <span className={`signal signal-${outcome.direction.toLowerCase()}`}>{outcome.direction}</span>
+                  <strong>{outcome.symbol}</strong>
+                  <span>{outcome.netReturnPercent >= 0 ? "+" : ""}{outcome.netReturnPercent.toFixed(2)}%</span>
+                  <strong className={outcome.won ? "positive" : "negative"}>{outcome.netPnlUsd >= 0 ? "+" : ""}{formatUsd(outcome.netPnlUsd)}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="outcome-empty">採点可能な結果はまだありません。</p>
+          )}
+        </div>
+      </div>
+
+      <p className="journal-disclaimer">
+        これは方向シグナルの紙上評価です。実際の約定や利益を保証せず、秘密鍵・署名・トークン承認は一切使用しません。
+      </p>
+    </section>
+  );
+}
+
+const portfolioRiskLabels = {
+  pass: "PASS",
+  blocked: "BLOCKED",
+  unavailable: "DATA WAIT",
+} as const;
+
+function PortfolioRiskBoard({ risk }: { risk: PortfolioRiskAssessment }) {
+  const pnlClass =
+    risk.dailyNetPnlUsd > 0
+      ? "positive"
+      : risk.dailyNetPnlUsd < 0
+        ? "negative"
+        : "muted";
+
+  return (
+    <section
+      className={`portfolio-risk-board portfolio-risk-${risk.status} shell`}
+      aria-labelledby="portfolio-risk-title"
+    >
+      <div className="portfolio-risk-heading">
+        <div>
+          <span className="section-index">05 / PORTFOLIO RISK</span>
+          <h2 id="portfolio-risk-title">銘柄ではなく、資産全体で止める。</h2>
+          <p>
+            集中・相関・ETH連動・24時間損失・連敗を新規BUYの前に検査します。
+            データ不足時もFail ClosedでBUYを止め、保有資産のSELL経路は維持します。
+          </p>
+        </div>
+        <span className={`portfolio-risk-status portfolio-risk-status-${risk.status}`}>
+          {portfolioRiskLabels[risk.status]}
+        </span>
+      </div>
+
+      <div className="portfolio-risk-metrics">
+        <div>
+          <span>MAX SINGLE ASSET</span>
+          <strong className={risk.maxSingleAssetPercent > risk.limits.singleAssetPercent ? "negative" : ""}>
+            {risk.maxSingleAssetPercent.toFixed(1)}%
+          </strong>
+          <small>{risk.maxSingleAssetSymbol ?? "NO ASSET"} · LIMIT {risk.limits.singleAssetPercent}%</small>
+        </div>
+        <div>
+          <span>MAX ETH CORR.</span>
+          <strong className={risk.maxEthCorrelation !== null && risk.maxEthCorrelation >= risk.limits.correlation ? "negative" : ""}>
+            {risk.maxEthCorrelation === null ? "—" : risk.maxEthCorrelation.toFixed(2)}
+          </strong>
+          <small>{risk.maxEthCorrelationSymbol ?? "DATA WAIT"} · LIMIT {risk.limits.correlation.toFixed(2)}</small>
+        </div>
+        <div>
+          <span>24H PAPER P/L</span>
+          <strong className={pnlClass}>
+            {risk.dailyNetPnlUsd > 0 ? "+" : ""}{formatUsd(risk.dailyNetPnlUsd)}
+          </strong>
+          <small>LOSS {risk.dailyLossPercent.toFixed(2)}% · LIMIT {risk.limits.dailyLossPercent}%</small>
+        </div>
+        <div>
+          <span>MAX LOSS STREAK</span>
+          <strong className={risk.longestLossStreak >= risk.limits.lossStreak ? "negative" : ""}>
+            {risk.longestLossStreak}
+          </strong>
+          <small>LIMIT {risk.limits.lossStreak} CONSECUTIVE</small>
+        </div>
+      </div>
+
+      <div className="portfolio-risk-reasons">
+        <span>{risk.blockNewBuys ? "BUY GATE CLOSED" : "BUY GATE OPEN"}</span>
+        <ul>
+          {risk.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+export function Dashboard({
+  snapshot,
+  chartModel,
+  plan,
+  journal,
+  trendScout,
+}: {
+  snapshot: PortfolioSnapshot;
+  chartModel: ChartModelSnapshot;
+  plan: StrategyPlan;
+  journal: PaperJournalSnapshot;
+  trendScout: TrendScoutSnapshot;
+}) {
+  const signals = new Map(plan.signals.map((signal) => [signal.symbol, signal]));
+  const actionableSignals = plan.signals.filter((signal) =>
+    ["BUY", "SELL"].includes(signal.action),
+  );
+
+  return (
+    <main>
+      <header className="topbar shell">
+        <a className="brand" href="#top" aria-label="SUMI TRADE LAB ホーム">
+          <span className="brand-mark">S</span>
+          <span>
+            SUMI <b>TRADE LAB</b>
+          </span>
+        </a>
+        <div className="top-status">
+          <span className="mode-pill">PAPER MODE</span>
+          <span className="network-pill"><i /> ETHEREUM</span>
+        </div>
+      </header>
+
+      <section id="top" className="hero shell">
+        <div className="hero-copy">
+          <span className="eyebrow">MULTI-TIMEFRAME WALLET EXPERIMENT / 02</span>
+          <h1><em>条件</em>で売買する。</h1>
+          <p>
+            コントラクト、流動性、市場局面、5分・15分・1時間の方向を重ね、コスト後も優位性が残る場面だけを評価。
+            現在は実資産を動かさず、同じウォレットで判断精度を鍛えます。
+          </p>
+        </div>
+        <div className="wallet-card">
+          <span>CONNECTED WALLET</span>
+          <strong>{shortAddress(snapshot.walletAddress)}</strong>
+          <div className="wallet-lock"><i /> EXECUTION HARD-LOCKED</div>
+        </div>
+      </section>
+
+      <section className="metrics shell" aria-label="資産概要">
+        <div className="metric metric-primary">
+          <span>PORTFOLIO VALUE</span>
+          <strong>{formatUsd(snapshot.totalUsd)}</strong>
+          <small>公開価格による概算</small>
+        </div>
+        <div className="metric">
+          <span>AUTO-ELIGIBLE</span>
+          <strong>{formatUsd(snapshot.tradeableUsd)}</strong>
+          <small>市場・契約ゲート通過額</small>
+        </div>
+        <div className="metric">
+          <span>GAS RESERVE</span>
+          <strong>{snapshot.gasBalanceEth.toFixed(5)} ETH</strong>
+          <small>{formatUsd(snapshot.gasBalanceUsd)} / 最低 {snapshot.gasReserveEth} ETH</small>
+        </div>
+        <div className="metric metric-alert">
+          <span>BLOCKED VALUE</span>
+          <strong>{formatUsd(snapshot.blockedUsd)}</strong>
+          <small>自動注文から隔離</small>
+        </div>
+      </section>
+
+      <section className="system-strip shell" aria-label="システム構成">
+        <div><span>01</span><strong>READ</strong><small>公開残高</small></div>
+        <i />
+        <div><span>02</span><strong>VERIFY</strong><small>契約・双方向見積</small></div>
+        <i />
+        <div><span>03</span><strong>TREND</strong><small>話題性</small></div>
+        <i />
+        <div><span>04</span><strong>MODEL</strong><small>3時間軸</small></div>
+        <i />
+        <div><span>05</span><strong>LOCK</strong><small>署名禁止</small></div>
+      </section>
+
+      {snapshot.warnings.length > 0 ? (
+        <section className="warning-stack shell" aria-label="警告">
+          {snapshot.warnings.map((warning) => (
+            <p key={warning}><span>!</span>{warning}</p>
+          ))}
+        </section>
+      ) : null}
+
+      <ChartModelBoard chartModel={chartModel} />
+
+      <StrategyComparisonBoard chartModel={chartModel} />
+
+      <TrendScoutBoard trendScout={trendScout} />
+
+      <PaperJournalBoard journal={journal} />
+
+      <PortfolioRiskBoard risk={plan.portfolioRisk} />
+
+      <section className="workspace shell">
+        <div className="portfolio-panel panel">
+          <div className="panel-heading">
+            <div>
+              <span className="section-index">06 / WALLET</span>
+              <h2>保有資産と実行判定</h2>
+            </div>
+            <span className="count-badge">{snapshot.assets.length} ASSETS</span>
+          </div>
+          <div className="asset-header" aria-hidden="true">
+            <span>資産</span><span>残高</span><span>24H</span><span>流動性</span><span>判定</span>
+          </div>
+          <div className="asset-list">
+            {snapshot.assets.map((asset) => (
+              <AssetRow key={asset.symbol} asset={asset} signal={signals.get(asset.symbol)} />
+            ))}
+          </div>
+        </div>
+
+        <aside className="side-column">
+          <div className="panel signal-panel">
+            <div className="panel-heading compact">
+              <div>
+              <span className="section-index">07 / ORDERS</span>
+                <h2>紙上オーダー</h2>
+              </div>
+              <span className="live-indicator"><i /> LIVE DATA</span>
+            </div>
+            <div className="signal-summary">
+              <div><strong>{plan.summary.buyCount}</strong><span>BUY</span></div>
+              <div><strong>{plan.summary.sellCount}</strong><span>SELL</span></div>
+              <div><strong>{plan.summary.blockedCount}</strong><span>BLOCK</span></div>
+            </div>
+            <div className="order-list">
+              {actionableSignals.length === 0 ? (
+                <p className="empty-order">現在の条件では注文候補なし。HOLDを継続します。</p>
+              ) : (
+                actionableSignals.map((signal) => (
+                  <div className="order" key={signal.symbol}>
+                    <span className={`signal signal-${signal.action.toLowerCase()}`}>
+                      {signal.action}
+                    </span>
+                    <div><strong>{signal.symbol}</strong><small>{signal.allocationPercent}%</small></div>
+                    <strong>{formatUsd(signal.estimatedUsd)}</strong>
+                  </div>
+                ))
+              )}
+            </div>
+            <p className="strategy-note">
+              EMA 9/21 · RSI 14 · ATR 14<br />
+              5M / 15M / 1H + REGIME + AMM IMPACT
+            </p>
+          </div>
+
+          <PaperControls
+            observedAt={snapshot.generatedAt}
+            lastScanAt={journal.lastScanAt}
+            scanCount={journal.scanCount}
+            cadenceMinutes={chartModel.cadenceMinutes}
+            journalStatus={journal.status}
+            journalMessage={journal.message}
+          />
+
+          <div className="panel safety-panel">
+            <span className="section-index">08 / SAFETY</span>
+            <h2>実行ガード</h2>
+            <ul>
+              <li><i className="checked" />外部送金を禁止</li>
+              <li><i className="checked" />未承認トークンを除外</li>
+              <li><i className="checked" />BUY／SELL双方向見積</li>
+              <li><i className="checked" />価格影響上限超を停止</li>
+              <li><i className="checked" />集中・相関・24時間損失ゲート</li>
+              <li><i className="checked" />0.005 ETHを固定</li>
+              <li><i className="checked" />オンチェーン署名なし</li>
+              <li><i className="pending" />実売買接続は未実装</li>
+            </ul>
+          </div>
+        </aside>
+      </section>
+
+      <footer className="footer shell">
+        <span>SUMI TRADE LAB / BUILD 1.2</span>
+        <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
+      </footer>
+    </main>
+  );
+}
