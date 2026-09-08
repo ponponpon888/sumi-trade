@@ -712,6 +712,40 @@ function ConfidenceCalibrationBoard({ journal }: { journal: PaperJournalSnapshot
   );
 }
 
+const regimePerformanceLabels = {
+  uptrend: "UPTREND",
+  downtrend: "DOWNTREND",
+  range: "RANGE",
+  "high-volatility": "HIGH VOL",
+  "low-liquidity": "LOW LIQ",
+} as const;
+
+function RegimePerformanceBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  return (
+    <section className="regime-performance-board" aria-label="市場局面別の紙上成績">
+      <div className="regime-performance-heading">
+        <div><span>REGIME ATTRIBUTION</span><strong>どの相場で、勝ち負けているか。</strong></div>
+        <small>30D · CORE CHART · RESEARCH ONLY</small>
+      </div>
+      <div className="regime-performance-grid">
+        {journal.regimePerformance.map((performance) => (
+          <article key={performance.regime}>
+            <div>
+              <span>{regimePerformanceLabels[performance.regime]}</span>
+              <small>{performance.maturedCount}/{performance.minimumSamples} SETTLED</small>
+            </div>
+            <strong className={performance.netPnlUsd < 0 ? "negative" : performance.netPnlUsd > 0 ? "positive" : ""}>
+              {performance.maturedCount ? signedPercent(performance.averageNetReturnPercent) : "—"}
+            </strong>
+            <small>WR {performance.maturedCount ? `${performance.winRate.toFixed(0)}%` : "—"} · PF {performance.profitFactor === null ? "—" : performance.profitFactor.toFixed(2)}</small>
+          </article>
+        ))}
+      </div>
+      <p>局面別結果は分析表示のみです。既存の戦略切替・BUY／SELL判定を自動変更しません。</p>
+    </section>
+  );
+}
+
 function PerformanceCurve({ journal }: { journal: PaperJournalSnapshot }) {
   const values = journal.performanceTimeline.map(
     (point) => point.cumulativeNetPnlUsd,
@@ -900,6 +934,8 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
       </div>
 
       <ConfidenceCalibrationBoard journal={journal} />
+
+      <RegimePerformanceBoard journal={journal} />
 
       <PerformanceLens journal={journal} />
 
@@ -1319,7 +1355,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.15</span>
+          <span>SUMI TRADE LAB / BUILD 1.16</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

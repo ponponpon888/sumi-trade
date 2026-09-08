@@ -8,6 +8,7 @@ import type {
   PaperModelPerformance,
   PaperOperationalReadiness,
   PaperQualification,
+  PaperRegimePerformance,
   PaperPerformanceTimelinePoint,
   PaperPeriodPerformance,
   PaperScanRecord,
@@ -38,6 +39,7 @@ const SCAN_FRESHNESS_MINUTES = 12;
 const ONE_HOUR_MS = 60 * 60 * 1_000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 const MINIMUM_CALIBRATION_SAMPLES = 10 as const;
+const MINIMUM_REGIME_SAMPLES = 10 as const;
 
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -178,6 +180,7 @@ export function createPaperScanRecord(
       entryPriceUsd: analysis.lastPrice,
       modelScore: analysis.score,
       confidence: analysis.confidence,
+      marketRegime: analysis.regime?.regime,
       notionalUsd: round(Math.max(plannedNotional, modelNotional)),
       estimatedCostUsd: round(analysis.risk.estimatedRoundTripCostUsd),
       costGatePassed: analysis.risk.costGatePassed,
@@ -702,6 +705,36 @@ export function calculateConfidenceCalibration(
   };
 }
 
+export function calculateRegimePerformance(
+  outcomes: PaperTradeOutcome[],
+): PaperRegimePerformance[] {
+  const regimes = [
+    "uptrend",
+    "downtrend",
+    "range",
+    "high-volatility",
+    "low-liquidity",
+  ] as const;
+
+  return regimes.map((regime) => {
+    const metrics = calculateOutcomeMetrics(
+      outcomes.filter((outcome) => outcome.marketRegime === regime),
+      0,
+    );
+    return {
+      regime,
+      maturedCount: metrics.maturedCount,
+      winRate: metrics.winRate,
+      netPnlUsd: metrics.netPnlUsd,
+      averageNetReturnPercent: metrics.averageNetReturnPercent,
+      profitFactor: metrics.profitFactor,
+      minimumSamples: MINIMUM_REGIME_SAMPLES,
+      status: metrics.maturedCount >= MINIMUM_REGIME_SAMPLES ? "ready" : "collecting",
+      researchOnly: true,
+    };
+  });
+}
+
 function performanceTimeline(
   outcomes: PaperTradeOutcome[],
   nowMs: number,
@@ -834,6 +867,7 @@ export function emptyPaperJournal(
       chart: calculateConfidenceCalibration([], "chart"),
       "community-trend": calculateConfidenceCalibration([], "community-trend"),
     },
+    regimePerformance: calculateRegimePerformance([]),
     assetPerformance: [],
     performanceTimeline: [],
     recentOutcomes: [],
@@ -981,6 +1015,7 @@ export function evaluatePaperJournal(
         "community-trend",
       ),
     },
+    regimePerformance: calculateRegimePerformance(analyticsOutcomes),
     assetPerformance: assetPerformance(
       analyticsOutcomes,
       analyticsStartingCapital,
