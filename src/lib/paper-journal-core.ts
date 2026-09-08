@@ -21,6 +21,7 @@ import type {
 } from "@/lib/types";
 import {
   assessDataSourceQuality,
+  calculateDataSourceIncidents,
   calculateDataSourceQualityHistory,
 } from "@/lib/data-source-quality";
 
@@ -932,6 +933,7 @@ export function emptyPaperJournal(
     assetPerformance: [],
     performanceTimeline: [],
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
+    dataSourceIncidents24h: calculateDataSourceIncidents([]),
     recentOutcomes: [],
     message,
   };
@@ -1084,6 +1086,10 @@ export function evaluatePaperJournal(
     ),
     performanceTimeline: performanceTimeline(analyticsOutcomes, nowMs),
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory(
+      analyticsRecords,
+      nowMs,
+    ),
+    dataSourceIncidents24h: calculateDataSourceIncidents(
       analyticsRecords,
       nowMs,
     ),

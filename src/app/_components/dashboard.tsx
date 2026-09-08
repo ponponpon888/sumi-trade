@@ -5,6 +5,7 @@ import { formatAmount, formatUsd } from "@/lib/number";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  DataSourceIncidentItem,
   DataSourceQualityHistoryItem,
   DataSourceQualitySnapshot,
   ModelDriftAssessment,
@@ -97,14 +98,26 @@ const dataSourceHistoryStatusLabels = {
   degraded: "DEGRADED",
 } as const;
 
+const dataSourceIncidentStatusLabels = {
+  collecting: "WATCH COLLECTING",
+  monitoring: "NO INCIDENT",
+  incident: "INCIDENT OPEN",
+  recovered: "RECOVERED",
+} as const;
+
 function DataSourceQualityBoard({
   quality,
   history,
+  incidents,
 }: {
   quality: DataSourceQualitySnapshot;
   history: DataSourceQualityHistoryItem[];
+  incidents: DataSourceIncidentItem[];
 }) {
   const historyBySource = new Map(history.map((item) => [item.source, item]));
+  const incidentsBySource = new Map(
+    incidents.map((item) => [item.source, item]),
+  );
   return (
     <section
       className={`data-source-board data-source-${quality.status} shell`}
@@ -123,6 +136,7 @@ function DataSourceQualityBoard({
       <div className="data-source-grid">
         {quality.sources.map((source) => {
           const historical = historyBySource.get(source.source);
+          const incident = incidentsBySource.get(source.source);
           return (
             <article className={`data-source-card data-source-card-${source.status}`} key={source.source}>
               <div>
@@ -138,6 +152,16 @@ function DataSourceQualityBoard({
                   <span>HISTORY 24H · {dataSourceHistoryStatusLabels[historical.status]}</span>
                   <small>AVAILABLE {historical.availabilityPercent.toFixed(1)}% · AVG COVERAGE {historical.averageCoveragePercent.toFixed(1)}%</small>
                   <small>OBS {historical.observationCount}/{historical.minimumObservations} MIN · FAIL STREAK {historical.currentFailureStreak}</small>
+                </div>
+              ) : null}
+              {incident ? (
+                <div className={`data-source-incident data-source-incident-${incident.status}`}>
+                  <span>{dataSourceIncidentStatusLabels[incident.status]}</span>
+                  <small>INCIDENTS 24H {incident.incidentCount24h} · FAIL {incident.currentFailureStreak}/3</small>
+                  <small>{incident.status === "incident" ? `RECOVERY ${incident.currentRecoveryStreak}/3 HEALTHY` : incident.latestRecoveredAt ? `RECOVERED ${new Date(incident.latestRecoveredAt).toISOString()}` : "3 CONSECUTIVE FAILURES TO OPEN"}</small>
+                  {incident.latestIncidentStartedAt ? (
+                    <small>LAST OPEN {new Date(incident.latestIncidentStartedAt).toISOString()}</small>
+                  ) : null}
                 </div>
               ) : null}
             </article>
@@ -1379,6 +1403,7 @@ export function Dashboard({
       <DataSourceQualityBoard
         quality={dataSourceQuality}
         history={journal.dataSourceQualityHistory24h}
+        incidents={journal.dataSourceIncidents24h}
       />
 
       <ChartModelBoard chartModel={chartModel} />
@@ -1477,7 +1502,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.20</span>
+          <span>SUMI TRADE LAB / BUILD 1.21</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

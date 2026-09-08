@@ -263,6 +263,16 @@ export interface DataSourceQualityHistoryItem {
   currentFailureStreak: number;
 }
 
+export interface DataSourceIncidentItem {
+  source: DataSourceId;
+  status: "collecting" | "monitoring" | "incident" | "recovered";
+  incidentCount24h: number;
+  currentFailureStreak: number;
+  currentRecoveryStreak: number;
+  latestIncidentStartedAt: string | null;
+  latestRecoveredAt: string | null;
+}
+
 export interface MarketData {
   dexId: string;
   pairAddress: string;
@@ -687,6 +697,7 @@ export interface PaperJournalSnapshot {
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];
+  dataSourceIncidents24h: DataSourceIncidentItem[];
   recentOutcomes: PaperTradeOutcome[];
   message: string;
 }
