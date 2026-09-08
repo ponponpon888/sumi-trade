@@ -281,6 +281,16 @@ describe("paper journal", () => {
     expect(result.winRate).toBe(100);
     expect(result.netPnlUsd).toBe(18);
     expect(result.executionLocked).toBe(true);
+    expect(result.recentOutcomes[0].entryDataQuality).toMatchObject({
+      status: "unavailable",
+      averageCoveragePercent: 40,
+      unavailableSources: ["dexscreener", "ethereum-rpc", "kyberswap"],
+    });
+    expect(
+      result.dataQualityPerformance.find(
+        (performance) => performance.band === "unavailable",
+      ),
+    ).toMatchObject({ maturedCount: 1, netPnlUsd: 18 });
   });
 
   it("collects settled outcomes for the 30-day audit export", () => {
@@ -516,6 +526,11 @@ describe("paper journal", () => {
       maturedCount: 1,
       netPnlUsd: -12,
     });
+    expect(
+      result.dataQualityPerformance.find(
+        (performance) => performance.band === "unknown",
+      ),
+    ).toMatchObject({ maturedCount: 1, netPnlUsd: 18 });
   });
 
   it("keeps the seven-day promotion window while comparing 24h, 7d, and 30d", () => {

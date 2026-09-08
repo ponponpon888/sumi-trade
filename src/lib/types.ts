@@ -253,6 +253,18 @@ export interface PaperDataSourceObservation {
   dataAgeSeconds: number | null;
 }
 
+export type PaperDecisionDataQualityStatus =
+  | "complete"
+  | "partial"
+  | "unavailable";
+
+export interface PaperDecisionDataQuality {
+  status: PaperDecisionDataQualityStatus;
+  averageCoveragePercent: number;
+  degradedSources: DataSourceId[];
+  unavailableSources: DataSourceId[];
+}
+
 export interface DataSourceQualityHistoryItem {
   source: DataSourceId;
   status: "collecting" | "healthy" | "degraded";
@@ -530,6 +542,17 @@ export interface PaperTradeOutcome extends PaperSignalObservation {
   netReturnPercent: number;
   netPnlUsd: number;
   won: boolean;
+  entryDataQuality?: PaperDecisionDataQuality;
+}
+
+export interface PaperDataQualityPerformance {
+  band: PaperDecisionDataQualityStatus | "unknown";
+  status: "collecting" | "monitoring";
+  minimumSamples: 10;
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
 }
 
 export interface PaperQualification {
@@ -698,6 +721,7 @@ export interface PaperJournalSnapshot {
   performanceTimeline: PaperPerformanceTimelinePoint[];
   dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];
   dataSourceIncidents24h: DataSourceIncidentItem[];
+  dataQualityPerformance: PaperDataQualityPerformance[];
   recentOutcomes: PaperTradeOutcome[];
   message: string;
 }

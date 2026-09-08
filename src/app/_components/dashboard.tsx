@@ -105,6 +105,13 @@ const dataSourceIncidentStatusLabels = {
   recovered: "RECOVERED",
 } as const;
 
+const decisionDataQualityLabels = {
+  complete: "COMPLETE",
+  partial: "PARTIAL",
+  unavailable: "UNAVAILABLE",
+  unknown: "LEGACY / UNKNOWN",
+} as const;
+
 function DataSourceQualityBoard({
   quality,
   history,
@@ -928,6 +935,28 @@ function PerformanceLens({ journal }: { journal: PaperJournalSnapshot }) {
         ))}
       </div>
 
+      <section className="data-quality-performance" aria-label="判断時データ品質別の30日成績">
+        <div className="performance-card-heading">
+          <div><span>ENTRY DATA QUALITY</span><strong>判断時のデータ品質別成績</strong></div>
+          <small>30D · CHART MODEL · RESEARCH ONLY</small>
+        </div>
+        <div className="data-quality-performance-grid">
+          {journal.dataQualityPerformance.map((performance) => (
+            <article key={performance.band} className={`data-quality-band-${performance.band}`}>
+              <div>
+                <span>{decisionDataQualityLabels[performance.band]}</span>
+                <small>{performance.status.toUpperCase()}</small>
+              </div>
+              <strong className={performance.netPnlUsd > 0 ? "positive" : performance.netPnlUsd < 0 ? "negative" : "muted"}>
+                {performance.maturedCount ? `${performance.netPnlUsd > 0 ? "+" : ""}${formatUsd(performance.netPnlUsd)}` : "—"}
+              </strong>
+              <small>{performance.maturedCount}/{performance.minimumSamples} SAMPLES · WIN {performance.maturedCount ? `${performance.winRate.toFixed(1)}%` : "—"}</small>
+              <small>AVG NET {performance.maturedCount ? signedPercent(performance.averageNetReturnPercent) : "—"}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <div className="performance-detail-grid">
         <PerformanceCurve journal={journal} />
         <article className="asset-performance-card">
@@ -1103,6 +1132,18 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
                       <ul>{outcome.decisionReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
                     ) : (
                       <small>旧レコードのため判断理由は保存されていません。</small>
+                    )}
+                  </div>
+                  <div className={`outcome-data-quality outcome-data-quality-${outcome.entryDataQuality?.status ?? "unknown"}`}>
+                    <span>ENTRY DATA · {decisionDataQualityLabels[outcome.entryDataQuality?.status ?? "unknown"]}</span>
+                    {outcome.entryDataQuality ? (
+                      <small>
+                        AVG COVERAGE {outcome.entryDataQuality.averageCoveragePercent.toFixed(1)}%
+                        {outcome.entryDataQuality.unavailableSources.length ? ` · NO SAMPLE ${outcome.entryDataQuality.unavailableSources.join(" / ")}` : ""}
+                        {outcome.entryDataQuality.degradedSources.length ? ` · PARTIAL ${outcome.entryDataQuality.degradedSources.join(" / ")}` : ""}
+                      </small>
+                    ) : (
+                      <small>旧レコードのため判断時の取得元品質は保存されていません。</small>
                     )}
                   </div>
                   <small className="outcome-audit-id">{outcome.decisionId ?? "LEGACY DECISION"} · {new Date(outcome.signalTime).toISOString()}</small>
@@ -1502,7 +1543,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.21</span>
+          <span>SUMI TRADE LAB / BUILD 1.22</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

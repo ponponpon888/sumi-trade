@@ -71,6 +71,7 @@ Ethereumウォレットを読み取り、DEXの価格・流動性と5分足を�
 - シグナル理由・スコア・確信度・6時間後結果を判断ID単位で監査表示・CSV出力
 - Blockscout・Dexscreener・GeckoTerminal・Ethereum RPC・KyberSwapの取得率と欠損率を監視
 - 取得元別の24時間可用率・平均取得率・連続失敗と障害復旧状態を監視
+- 判断時の取得元品質を6時間後結果へ紐付け、品質帯別の30日成績を比較
 
 ## v1.1 ポートフォリオリスク判定
 
@@ -220,6 +221,12 @@ Blockscout、Dexscreener、GeckoTerminal、Ethereum RPC、KyberSwapについて�
 取得元ごとに3回連続で`NO SAMPLE`になった時点を障害開始として記録し、直近24時間の障害回数・開始時刻・現在の失敗連続数を表示します。障害後は3回連続で`HEALTHY`を確認するまで復旧扱いにせず、途中の`PARTIAL`で復旧カウントをリセットします。
 
 状態は`INCIDENT OPEN`、`RECOVERED`、`NO INCIDENT`、観測不足時の`WATCH COLLECTING`で表示します。障害監視は運用品質の可視化専用で、既存のFail Closed、SELL経路、PAPER MODE、`executionLocked: true`を変更しません。
+
+## v1.22 判断時データ品質別の成績
+
+6時間後に紙上判断を採点するとき、エントリー時点の5取得元を`COMPLETE`、`PARTIAL`、`UNAVAILABLE`へ分類し、平均取得率と不足元を結果へ紐付けます。品質記録のない旧データは`LEGACY / UNKNOWN`として推測せず分離します。
+
+チャートモデルの30日成績を品質帯ごとに件数・勝率・コスト後損益・平均リターンで比較し、CSV監査にも同じ根拠を追加します。各帯10件までは`COLLECTING`とし、この分析はモデルや売買ゲートを自動変更しません。
 
 双方向見積はルートAPIの読み取り結果であり、実際のオンチェーン約定や売却成功を保証するものではありません。見積の有効時間は30秒として扱い、API停止時は安全側へ閉じて新規BUYを止めます。
 

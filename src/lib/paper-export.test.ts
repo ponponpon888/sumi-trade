@@ -18,6 +18,12 @@ function outcome(patch: Partial<PaperTradeOutcome> = {}): PaperTradeOutcome {
     confidence: 68,
     marketRegime: "uptrend",
     decisionReasons: ["5分・15分・1時間が上向き", "コストゲート通過"],
+    entryDataQuality: {
+      status: "partial",
+      averageCoveragePercent: 92,
+      degradedSources: ["geckoterminal"],
+      unavailableSources: [],
+    },
     notionalUsd: 50,
     estimatedCostUsd: 2,
     costGatePassed: true,
@@ -38,7 +44,7 @@ describe("paper outcome CSV", () => {
 
     expect(csv.startsWith("\uFEFFsignal_time,")).toBe(true);
     expect(csv).toContain(
-      "decision-1,SUMI,BUY,72,68,uptrend,5分・15分・1時間が上向き | コストゲート通過,1,1.1,50,2,10,6,3,true,true,true",
+      "decision-1,SUMI,BUY,72,68,uptrend,5分・15分・1時間が上向き | コストゲート通過,partial,92,geckoterminal,,1,1.1,50,2,10,6,3,true,true,true",
     );
     expect(csv.endsWith("\r\n")).toBe(true);
   });

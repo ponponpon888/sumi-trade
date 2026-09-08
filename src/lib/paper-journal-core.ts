@@ -5,6 +5,8 @@ import type {
   PaperConfidenceCalibration,
   PaperConfidenceBandPerformance,
   PaperDriftPerformance,
+  PaperDataQualityPerformance,
+  PaperDecisionDataQuality,
   PaperModelPerformance,
   PaperOperationalReadiness,
   PaperQualification,
@@ -18,6 +20,7 @@ import type {
   PortfolioSnapshot,
   StrategyPlan,
   TrendScoutSnapshot,
+  DataSourceId,
 } from "@/lib/types";
 import {
   assessDataSourceQuality,
@@ -47,6 +50,14 @@ const MINIMUM_CALIBRATION_SAMPLES = 10 as const;
 const MINIMUM_REGIME_SAMPLES = 10 as const;
 const REGIME_ALERT_AVERAGE_RETURN_PERCENT = -1 as const;
 const REGIME_ALERT_PROFIT_FACTOR = 0.8 as const;
+const MINIMUM_DATA_QUALITY_SAMPLES = 10 as const;
+const DATA_SOURCE_IDS: DataSourceId[] = [
+  "blockscout",
+  "dexscreener",
+  "geckoterminal",
+  "ethereum-rpc",
+  "kyberswap",
+];
 
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -64,6 +75,42 @@ function compactDecisionReasons(...groups: Array<Array<string | undefined>>): st
       .map((reason) => reason?.trim())
       .filter((reason): reason is string => Boolean(reason)),
   )].slice(0, 5);
+}
+
+function decisionDataQuality(
+  record: PaperScanRecord,
+): PaperDecisionDataQuality | undefined {
+  if (!record.dataSourceQuality?.length) return undefined;
+  const bySource = new Map(
+    record.dataSourceQuality.map((observation) => [
+      observation.source,
+      observation,
+    ]),
+  );
+  const degradedSources: DataSourceId[] = [];
+  const unavailableSources: DataSourceId[] = [];
+  let coverageTotal = 0;
+
+  for (const source of DATA_SOURCE_IDS) {
+    const observation = bySource.get(source);
+    coverageTotal += observation?.coveragePercent ?? 0;
+    if (!observation || observation.status === "unavailable") {
+      unavailableSources.push(source);
+    } else if (observation.status === "degraded") {
+      degradedSources.push(source);
+    }
+  }
+
+  return {
+    status: unavailableSources.length
+      ? "unavailable"
+      : degradedSources.length
+        ? "partial"
+        : "complete",
+    averageCoveragePercent: round(coverageTotal / DATA_SOURCE_IDS.length),
+    degradedSources,
+    unavailableSources,
+  };
 }
 
 export function calculateOperationalReadiness(
@@ -325,6 +372,7 @@ function settleSignal(
 
   return {
     ...candidate.signal,
+    entryDataQuality: decisionDataQuality(candidate.record),
     signalTime: candidate.record.generatedAt,
     outcomeTime: outcomeRecord.generatedAt,
     exitPriceUsd: exitPrice,
@@ -333,6 +381,46 @@ function settleSignal(
     netPnlUsd: round(netPnlUsd),
     won: netPnlUsd > 0,
   };
+}
+
+export function calculateDataQualityPerformance(
+  outcomes: PaperTradeOutcome[],
+): PaperDataQualityPerformance[] {
+  const bands: PaperDataQualityPerformance["band"][] = [
+    "complete",
+    "partial",
+    "unavailable",
+    "unknown",
+  ];
+
+  return bands.map((band) => {
+    const scoped = outcomes.filter((outcome) =>
+      band === "unknown"
+        ? !outcome.entryDataQuality
+        : outcome.entryDataQuality?.status === band,
+    );
+    const wins = scoped.filter((outcome) => outcome.won).length;
+    return {
+      band,
+      status: scoped.length >= MINIMUM_DATA_QUALITY_SAMPLES
+        ? "monitoring"
+        : "collecting",
+      minimumSamples: MINIMUM_DATA_QUALITY_SAMPLES,
+      maturedCount: scoped.length,
+      winRate: scoped.length ? round((wins / scoped.length) * 100, 1) : 0,
+      netPnlUsd: round(
+        scoped.reduce((total, outcome) => total + outcome.netPnlUsd, 0),
+      ),
+      averageNetReturnPercent: scoped.length
+        ? round(
+          scoped.reduce(
+            (total, outcome) => total + outcome.netReturnPercent,
+            0,
+          ) / scoped.length,
+        )
+        : 0,
+    };
+  });
 }
 
 export function collectPaperTradeOutcomes(
@@ -934,6 +1022,7 @@ export function emptyPaperJournal(
     performanceTimeline: [],
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
     dataSourceIncidents24h: calculateDataSourceIncidents([]),
+    dataQualityPerformance: calculateDataQualityPerformance([]),
     recentOutcomes: [],
     message,
   };
@@ -1092,6 +1181,9 @@ export function evaluatePaperJournal(
     dataSourceIncidents24h: calculateDataSourceIncidents(
       analyticsRecords,
       nowMs,
+    ),
+    dataQualityPerformance: calculateDataQualityPerformance(
+      analyticsOutcomes,
     ),
     recentOutcomes: outcomes
       .filter((outcome) => signalModel(outcome) === "chart")
