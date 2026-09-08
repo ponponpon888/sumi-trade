@@ -118,6 +118,12 @@ const sourceQualityImpactStatusLabels = {
   "performance-alert": "PERFORMANCE ALERT",
 } as const;
 
+const sourceReasonImpactStatusLabels = {
+  collecting: "COLLECTING",
+  monitoring: "MONITORING",
+  "performance-alert": "REASON ALERT",
+} as const;
+
 function DataSourceQualityBoard({
   quality,
   history,
@@ -983,6 +989,30 @@ function PerformanceLens({ journal }: { journal: PaperJournalSnapshot }) {
                 <div><dt>CLEAN</dt><dd>{impact.cleanCount}/{impact.minimumSamples} · {impact.cleanCount ? signedPercent(impact.cleanAverageNetReturnPercent) : "—"}</dd></div>
                 <div><dt>IMPAIRED</dt><dd>{impact.impairedCount}/{impact.minimumSamples} · {impact.impairedCount ? signedPercent(impact.impairedAverageNetReturnPercent) : "—"}</dd></div>
               </dl>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="source-reason-impact" aria-label="取得元劣化時の判断理由別影響分析">
+        <div className="performance-card-heading">
+          <div><span>REASON ATTRIBUTION</span><strong>劣化の影響を受けた判断理由</strong></div>
+          <small>30D · SAME REASON · MIN 5 + 5 · RESEARCH ONLY</small>
+        </div>
+        <div className="source-reason-impact-grid">
+          {journal.sourceReasonImpact.map((impact) => (
+            <article key={impact.source} className={`source-reason-${impact.status}`}>
+              <div>
+                <span>{dataSourceLabels[impact.source]}</span>
+                <small>{sourceReasonImpactStatusLabels[impact.status]}</small>
+              </div>
+              <strong>{impact.reason ?? "判断理由を収集中"}</strong>
+              <p className={impact.status === "performance-alert" ? "negative" : "muted"}>
+                {impact.cleanCount && impact.impairedCount
+                  ? `${signedPercent(impact.returnGapPercentagePoints)} RETURN GAP`
+                  : "比較データ待ち"}
+              </p>
+              <small>CLEAN {impact.cleanCount}/{impact.minimumSamples} · IMPAIRED {impact.impairedCount}/{impact.minimumSamples}</small>
             </article>
           ))}
         </div>

@@ -2332,6 +2332,39 @@ a {
 .source-impact-performance-alert span,
 .source-impact-performance-alert small { color: var(--red); }
 
+.source-reason-impact {
+  border: 1px solid var(--line);
+  margin: 18px 0;
+  padding: 18px;
+}
+
+.source-reason-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.source-reason-impact-grid article {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.source-reason-impact-grid article + article { border-left: 1px solid var(--line); }
+.source-reason-impact-grid article > div { display: flex; justify-content: space-between; }
+.source-reason-impact-grid span,
+.source-reason-impact-grid small {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 7px;
+  letter-spacing: 0.05em;
+}
+.source-reason-impact-grid article > strong { font-size: 11px; line-height: 1.45; }
+.source-reason-impact-grid p { font-size: 9px; margin: 0; }
+.source-reason-performance-alert span,
+.source-reason-performance-alert small { color: var(--red); }
+
 .journal-disclaimer {
   color: #6c756e;
   font-size: 9px;
@@ -3230,6 +3263,9 @@ a {
   .source-quality-impact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .source-quality-impact-grid article:nth-child(odd) { border-left: 0; }
   .source-quality-impact-grid article:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .source-reason-impact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .source-reason-impact-grid article:nth-child(odd) { border-left: 0; }
+  .source-reason-impact-grid article:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .shell { width: min(100% - 28px, 680px); }
   .topbar { min-height: 70px; }
   .brand b { display: none; }
@@ -3307,6 +3343,8 @@ a {
   .data-quality-performance-grid article + article { border-left: 0; border-top: 1px solid var(--line); }
   .source-quality-impact-grid { grid-template-columns: 1fr; }
   .source-quality-impact-grid article + article { border-left: 0; border-top: 1px solid var(--line); }
+  .source-reason-impact-grid { grid-template-columns: 1fr; }
+  .source-reason-impact-grid article + article { border-left: 0; border-top: 1px solid var(--line); }
   .hero h1 { letter-spacing: -0.075em; }
   .hero-copy > p { font-size: 13px; }
   .metrics { grid-template-columns: 1fr; }

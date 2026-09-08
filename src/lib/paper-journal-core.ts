@@ -17,6 +17,7 @@ import type {
   PaperSignalModel,
   PaperSignalObservation,
   PaperSourceQualityImpact,
+  PaperSourceReasonImpact,
   PaperTradeOutcome,
   PortfolioSnapshot,
   StrategyPlan,
@@ -53,6 +54,7 @@ const REGIME_ALERT_AVERAGE_RETURN_PERCENT = -1 as const;
 const REGIME_ALERT_PROFIT_FACTOR = 0.8 as const;
 const MINIMUM_DATA_QUALITY_SAMPLES = 10 as const;
 const DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS = -1 as const;
+const MINIMUM_REASON_IMPACT_SAMPLES = 5 as const;
 const DATA_SOURCE_IDS: DataSourceId[] = [
   "blockscout",
   "dexscreener",
@@ -428,7 +430,9 @@ export function calculateDataQualityPerformance(
 export function calculateSourceQualityImpact(
   outcomes: PaperTradeOutcome[],
 ): PaperSourceQualityImpact[] {
-  const evidenced = outcomes.filter((outcome) => outcome.entryDataQuality);
+  const evidenced = outcomes.filter(
+    (outcome) => outcome.entryDataQuality && signalModel(outcome) === "chart",
+  );
 
   return DATA_SOURCE_IDS.map((source) => {
     const impaired = evidenced.filter((outcome) =>
@@ -475,6 +479,114 @@ export function calculateSourceQualityImpact(
       impairedAverageNetReturnPercent,
       returnGapPercentagePoints,
       impairedNetPnlUsd,
+    };
+  });
+}
+
+export function calculateSourceReasonImpact(
+  outcomes: PaperTradeOutcome[],
+): PaperSourceReasonImpact[] {
+  const evidenced = outcomes.filter(
+    (outcome) =>
+      outcome.entryDataQuality &&
+      signalModel(outcome) === "chart" &&
+      outcome.decisionReasons?.length,
+  );
+  const averageReturn = (scoped: PaperTradeOutcome[]) => scoped.length
+    ? round(
+      scoped.reduce(
+        (total, outcome) => total + outcome.netReturnPercent,
+        0,
+      ) / scoped.length,
+    )
+    : 0;
+
+  return DATA_SOURCE_IDS.map((source) => {
+    const byReason = new Map<
+      string,
+      { clean: PaperTradeOutcome[]; impaired: PaperTradeOutcome[] }
+    >();
+
+    for (const outcome of evidenced) {
+      const impaired =
+        outcome.entryDataQuality!.degradedSources.includes(source) ||
+        outcome.entryDataQuality!.unavailableSources.includes(source);
+      for (const reason of new Set(
+        outcome.decisionReasons!.map((item) => item.trim()).filter(Boolean),
+      )) {
+        const group = byReason.get(reason) ?? { clean: [], impaired: [] };
+        group[impaired ? "impaired" : "clean"].push(outcome);
+        byReason.set(reason, group);
+      }
+    }
+
+    const candidates = [...byReason.entries()].map(([reason, group]) => {
+      const cleanAverageNetReturnPercent = averageReturn(group.clean);
+      const impairedAverageNetReturnPercent = averageReturn(group.impaired);
+      return {
+        reason,
+        cleanCount: group.clean.length,
+        impairedCount: group.impaired.length,
+        cleanAverageNetReturnPercent,
+        impairedAverageNetReturnPercent,
+        returnGapPercentagePoints: round(
+          impairedAverageNetReturnPercent - cleanAverageNetReturnPercent,
+        ),
+        impairedNetPnlUsd: round(
+          group.impaired.reduce(
+            (total, outcome) => total + outcome.netPnlUsd,
+            0,
+          ),
+        ),
+      };
+    });
+    const qualified = candidates.filter(
+      (candidate) =>
+        candidate.cleanCount >= MINIMUM_REASON_IMPACT_SAMPLES &&
+        candidate.impairedCount >= MINIMUM_REASON_IMPACT_SAMPLES,
+    );
+    const selected = (qualified.length ? qualified : candidates).toSorted(
+      (left, right) => {
+        if (qualified.length) {
+          return (
+            left.returnGapPercentagePoints - right.returnGapPercentagePoints ||
+            left.impairedNetPnlUsd - right.impairedNetPnlUsd ||
+            right.impairedCount - left.impairedCount
+          );
+        }
+        return (
+          right.cleanCount + right.impairedCount -
+            (left.cleanCount + left.impairedCount) ||
+          left.reason.localeCompare(right.reason)
+        );
+      },
+    )[0];
+    const enoughSamples = Boolean(
+      selected &&
+      selected.cleanCount >= MINIMUM_REASON_IMPACT_SAMPLES &&
+      selected.impairedCount >= MINIMUM_REASON_IMPACT_SAMPLES,
+    );
+    const status = !enoughSamples
+      ? "collecting"
+      : selected!.impairedNetPnlUsd < 0 &&
+          selected!.returnGapPercentagePoints <=
+            DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS
+        ? "performance-alert"
+        : "monitoring";
+
+    return {
+      source,
+      status,
+      minimumSamples: MINIMUM_REASON_IMPACT_SAMPLES,
+      reason: selected?.reason ?? null,
+      cleanCount: selected?.cleanCount ?? 0,
+      impairedCount: selected?.impairedCount ?? 0,
+      cleanAverageNetReturnPercent:
+        selected?.cleanAverageNetReturnPercent ?? 0,
+      impairedAverageNetReturnPercent:
+        selected?.impairedAverageNetReturnPercent ?? 0,
+      returnGapPercentagePoints: selected?.returnGapPercentagePoints ?? 0,
+      impairedNetPnlUsd: selected?.impairedNetPnlUsd ?? 0,
     };
   });
 }
@@ -1080,6 +1192,7 @@ export function emptyPaperJournal(
     dataSourceIncidents24h: calculateDataSourceIncidents([]),
     dataQualityPerformance: calculateDataQualityPerformance([]),
     sourceQualityImpact: calculateSourceQualityImpact([]),
+    sourceReasonImpact: calculateSourceReasonImpact([]),
     recentOutcomes: [],
     message,
   };
@@ -1243,6 +1356,7 @@ export function evaluatePaperJournal(
       analyticsOutcomes,
     ),
     sourceQualityImpact: calculateSourceQualityImpact(analyticsOutcomes),
+    sourceReasonImpact: calculateSourceReasonImpact(analyticsOutcomes),
     recentOutcomes: outcomes
       .filter((outcome) => signalModel(outcome) === "chart")
       .toReversed()

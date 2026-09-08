@@ -4,6 +4,7 @@ import { compareStrategies } from "@/lib/chart-model";
 import {
   calculateOperationalReadiness,
   calculateSourceQualityImpact,
+  calculateSourceReasonImpact,
   collectPaperTradeOutcomes,
   createPaperScanRecord,
   evaluatePaperJournal,
@@ -271,6 +272,7 @@ function qualityOutcome(
     entryPriceUsd: 100,
     modelScore: 70,
     confidence: 70,
+    decisionReasons: ["EMA alignment"],
     notionalUsd: 100,
     estimatedCostUsd: 1,
     costGatePassed: true,
@@ -680,6 +682,31 @@ describe("paper journal", () => {
     expect(impact.find((item) => item.source === "blockscout")).toMatchObject({
       status: "collecting",
       cleanCount: 20,
+      impairedCount: 0,
+    });
+  });
+
+  it("finds the decision reason most affected by a degraded source", () => {
+    const clean = Array.from({ length: 5 }, (_, index) => ({
+      ...qualityOutcome(index, 2, false),
+      decisionReasons: ["EMA alignment", "Shared context"],
+    }));
+    const impaired = Array.from({ length: 5 }, (_, index) => ({
+      ...qualityOutcome(index + 5, -2, true),
+      decisionReasons: ["EMA alignment", "Shared context"],
+    }));
+    const impact = calculateSourceReasonImpact([...clean, ...impaired]);
+
+    expect(impact.find((item) => item.source === "geckoterminal")).toMatchObject({
+      status: "performance-alert",
+      reason: "EMA alignment",
+      cleanCount: 5,
+      impairedCount: 5,
+      returnGapPercentagePoints: -4,
+      impairedNetPnlUsd: -10,
+    });
+    expect(impact.find((item) => item.source === "blockscout")).toMatchObject({
+      status: "collecting",
       impairedCount: 0,
     });
   });
