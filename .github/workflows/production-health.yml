@@ -42,10 +42,14 @@ jobs:
             const report = JSON.parse(fs.readFileSync('production-health-report.json', 'utf8'));
             const title = '[SUMI] Production health alert';
             const details = report.failures.map((failure) => `- ${failure}`).join('\n');
+            const configuration = report.configurationIssues.length > 0
+              ? ['', 'Configuration keys requiring attention:', ...report.configurationIssues.map((key) => '- `' + key + '`')]
+              : [];
             const body = [
               `Production health is **${report.status}**.`,
               '',
               details,
+              ...configuration,
               '',
               `Build: ${report.snapshot.buildVersion ?? 'unknown'} (expected ${report.expectedVersion})`,
               `Checked: ${report.checkedAt}`,

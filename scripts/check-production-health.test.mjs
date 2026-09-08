@@ -24,7 +24,8 @@ globalThis.setTimeout = (callback) => { queueMicrotask(callback); return 0; };
 const cases = [
   ["healthy paper engine", {}, 0],
   ["intentional safety stop", { safetyStatus: "stopped" }, 0],
-  ["blocked configuration with empty details", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: [] } }, 1],
+  ["blocked configuration with empty details", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: [] } }, 1, 200, []],
+  ["reports only known configuration keys", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: ["WALLET_ADDRESS", "SAFETY_CONTROL_SECRET", "UNTRUSTED_VALUE", "WALLET_ADDRESS"] } }, 1, 200, ["WALLET_ADDRESS", "SAFETY_CONTROL_SECRET"]],
   ["missing configuration", { configurationStatus: undefined }, 1],
   ["missing safety state", { safetyStatus: undefined }, 1],
   ["unknown safety state", { safetyStatus: "unknown" }, 1],
@@ -36,7 +37,7 @@ const cases = [
   ["unavailable endpoint", {}, 1, 503],
   ["null response", null, 1],
 ];
-for (const [name, patch, expected, httpStatus = 200] of cases) {
+for (const [name, patch, expected, httpStatus = 200, expectedConfigurationIssues = []] of cases) {
   test(name, () => {
     const reportDirectory = mkdtempSync(join(tmpdir(), "sumi-health-"));
     const reportPath = join(reportDirectory, "report.json");
@@ -64,6 +65,7 @@ for (const [name, patch, expected, httpStatus = 200] of cases) {
       assert.equal(report.status === "pass", expected === 0);
       assert.equal("runtimeConfiguration" in report.snapshot, false);
       assert.equal("missingOrInvalid" in report, false);
+      assert.deepEqual(report.configurationIssues, expectedConfigurationIssues);
     } finally {
       rmSync(reportDirectory, { recursive: true, force: true });
     }

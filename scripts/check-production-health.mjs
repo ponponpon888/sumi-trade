@@ -6,6 +6,15 @@ const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 const expectedVersion = packageJson.version;
+const CONFIGURATION_KEYS = new Set([
+  "WALLET_ADDRESS",
+  "CRON_SECRET",
+  "REDIS_REST_CREDENTIALS",
+  "DASHBOARD_PASSWORD",
+  "SAFETY_CONTROL_SECRET",
+  "ETHEREUM_RPC_URL",
+  "SUMI_EMERGENCY_STOP",
+]);
 
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -37,6 +46,12 @@ function safeSnapshot(health) {
     paperEngineStatus: health?.paperEngineStatus ?? null,
     operationalReadiness: health?.operationalReadiness ?? null,
   };
+}
+
+function configurationIssues(health) {
+  const issues = health?.runtimeConfiguration?.missingOrInvalid;
+  if (!Array.isArray(issues)) return [];
+  return [...new Set(issues.filter((issue) => CONFIGURATION_KEYS.has(issue)))];
 }
 
 async function main() {
@@ -78,6 +93,7 @@ async function main() {
     expectedVersion,
     status: failures.length === 0 ? "pass" : "blocked",
     failures,
+    configurationIssues: configurationIssues(health),
     snapshot,
   };
   await saveReport(report);
@@ -102,6 +118,7 @@ try {
     expectedVersion,
     status: "unavailable",
     failures: ["HEALTH_CHECK_UNAVAILABLE"],
+    configurationIssues: [],
     error: message,
     snapshot: safeSnapshot(null),
   });
