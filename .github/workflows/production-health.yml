@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   health:
@@ -20,4 +21,84 @@ jobs:
         with:
           node-version: 24
       - name: Verify production safety and configuration
+        id: health
+        env:
+          SUMI_HEALTH_REPORT_PATH: production-health-report.json
         run: node scripts/check-production-health.mjs
+      - name: Preserve sanitized health audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-health-${{ github.run_id }}
+          path: production-health-report.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Open or update production alert
+        if: failure() && steps.health.outcome == 'failure'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('node:fs');
+            const report = JSON.parse(fs.readFileSync('production-health-report.json', 'utf8'));
+            const title = '[SUMI] Production health alert';
+            const details = report.failures.map((failure) => `- ${failure}`).join('\n');
+            const body = [
+              `Production health is **${report.status}**.`,
+              '',
+              details,
+              '',
+              `Build: ${report.snapshot.buildVersion ?? 'unknown'} (expected ${report.expectedVersion})`,
+              `Checked: ${report.checkedAt}`,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: 'production-health',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: 'production-health', color: 'B60205',
+                description: 'Automated SUMI production health alerts',
+              });
+            }
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'production-health', per_page: 10,
+            });
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['production-health'],
+              });
+            }
+      - name: Close recovered production alert
+        if: success() && steps.health.outcome == 'success'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = '[SUMI] Production health alert';
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'production-health', per_page: 10,
+            });
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Production health recovered. Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, state: 'closed',
+              });
+            }

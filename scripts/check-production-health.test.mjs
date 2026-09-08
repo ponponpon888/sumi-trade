@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).version;
@@ -36,18 +38,34 @@ const cases = [
 ];
 for (const [name, patch, expected, httpStatus = 200] of cases) {
   test(name, () => {
+    const reportDirectory = mkdtempSync(join(tmpdir(), "sumi-health-"));
+    const reportPath = join(reportDirectory, "report.json");
     const result = spawnSync(process.execPath, [
       "--import", "data:text/javascript," + encodeURIComponent(preload),
       new URL("./check-production-health.mjs", import.meta.url).pathname,
     ], {
       encoding: "utf8", timeout: 5000,
-      env: { ...process.env, SUMI_HEALTH_TEST_FIXTURE: JSON.stringify({
-        body: patch === null ? null : { ...valid, ...patch }, httpStatus,
-      }) },
+      env: {
+        ...process.env,
+        SUMI_HEALTH_REPORT_PATH: reportPath,
+        SUMI_HEALTH_TEST_FIXTURE: JSON.stringify({
+          body: patch === null ? null : { ...valid, ...patch }, httpStatus,
+        }),
+      },
     });
-    assert.ifError(result.error);
-    assert.equal(result.status, expected, result.stdout + result.stderr);
-    assert.match(result.stdout + result.stderr,
-      expected === 0 ? /Production health passed/ : /blocked|Error/);
+    try {
+      assert.ifError(result.error);
+      assert.equal(result.status, expected, result.stdout + result.stderr);
+      assert.match(result.stdout + result.stderr,
+        expected === 0 ? /Production health passed/ : /blocked|Error/);
+      const report = JSON.parse(readFileSync(reportPath, "utf8"));
+      assert.equal(report.schemaVersion, 1);
+      assert.equal(report.expectedVersion, version);
+      assert.equal(report.status === "pass", expected === 0);
+      assert.equal("runtimeConfiguration" in report.snapshot, false);
+      assert.equal("missingOrInvalid" in report, false);
+    } finally {
+      rmSync(reportDirectory, { recursive: true, force: true });
+    }
   });
 }
