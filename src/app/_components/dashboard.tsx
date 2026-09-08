@@ -720,28 +720,49 @@ const regimePerformanceLabels = {
   "low-liquidity": "LOW LIQ",
 } as const;
 
+const regimePerformanceStatusLabels = {
+  collecting: "COLLECTING",
+  monitoring: "MONITORING",
+  alert: "PERFORMANCE ALERT",
+} as const;
+
 function RegimePerformanceBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const alertCount = journal.regimePerformance.filter(
+    (performance) => performance.alert,
+  ).length;
+
   return (
-    <section className="regime-performance-board" aria-label="市場局面別の紙上成績">
+    <section
+      className={`regime-performance-board${alertCount ? " regime-performance-has-alert" : ""}`}
+      aria-label="市場局面別の紙上成績と悪化アラート"
+    >
       <div className="regime-performance-heading">
         <div><span>REGIME ATTRIBUTION</span><strong>どの相場で、勝ち負けているか。</strong></div>
-        <small>30D · CORE CHART · RESEARCH ONLY</small>
+        <small>{alertCount ? `${alertCount} PERFORMANCE ALERT` : "30D · CORE CHART · RESEARCH ONLY"}</small>
       </div>
       <div className="regime-performance-grid">
         {journal.regimePerformance.map((performance) => (
-          <article key={performance.regime}>
+          <article
+            className={`regime-performance-${performance.status}`}
+            key={performance.regime}
+          >
             <div>
               <span>{regimePerformanceLabels[performance.regime]}</span>
               <small>{performance.maturedCount}/{performance.minimumSamples} SETTLED</small>
             </div>
+            <b>{regimePerformanceStatusLabels[performance.status]}</b>
             <strong className={performance.netPnlUsd < 0 ? "negative" : performance.netPnlUsd > 0 ? "positive" : ""}>
               {performance.maturedCount ? signedPercent(performance.averageNetReturnPercent) : "—"}
             </strong>
             <small>WR {performance.maturedCount ? `${performance.winRate.toFixed(0)}%` : "—"} · PF {performance.profitFactor === null ? "—" : performance.profitFactor.toFixed(2)}</small>
+            <small>{performance.reasons[0]}</small>
           </article>
         ))}
       </div>
-      <p>局面別結果は分析表示のみです。既存の戦略切替・BUY／SELL判定を自動変更しません。</p>
+      <p>
+        10件以上で、30日損益がマイナスかつ平均リターン≤-1%またはPF&lt;0.80なら警告します。
+        分析表示のみで、既存の戦略切替・BUY／SELL判定を自動変更しません。
+      </p>
     </section>
   );
 }
@@ -1355,7 +1376,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.16</span>
+          <span>SUMI TRADE LAB / BUILD 1.17</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

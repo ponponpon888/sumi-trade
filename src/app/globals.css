@@ -1631,6 +1631,31 @@ a {
   font-weight: 800;
 }
 
+.regime-performance-grid article > b {
+  align-self: start;
+  border: 1px solid rgba(255, 189, 89, 0.4);
+  color: var(--amber);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  padding: 4px 6px;
+}
+
+.regime-performance-monitoring > b {
+  border-color: rgba(200, 255, 61, 0.38) !important;
+  color: var(--lime) !important;
+}
+
+.regime-performance-alert {
+  background: rgba(255, 101, 95, 0.055);
+}
+
+.regime-performance-alert > b,
+.regime-performance-has-alert .regime-performance-heading > small {
+  border-color: rgba(255, 101, 95, 0.48) !important;
+  color: var(--red) !important;
+}
+
 .regime-performance-grid article > strong {
   font-size: clamp(17px, 1.8vw, 24px);
 }

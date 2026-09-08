@@ -579,7 +579,13 @@ export interface PaperRegimePerformance {
   averageNetReturnPercent: number;
   profitFactor: number | null;
   minimumSamples: 10;
-  status: "collecting" | "ready";
+  status: "collecting" | "monitoring" | "alert";
+  alert: boolean;
+  limits: {
+    averageNetReturnPercent: -1;
+    profitFactor: 0.8;
+  };
+  reasons: string[];
   researchOnly: true;
 }
 

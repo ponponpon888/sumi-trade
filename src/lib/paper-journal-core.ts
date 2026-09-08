@@ -40,6 +40,8 @@ const ONE_HOUR_MS = 60 * 60 * 1_000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 const MINIMUM_CALIBRATION_SAMPLES = 10 as const;
 const MINIMUM_REGIME_SAMPLES = 10 as const;
+const REGIME_ALERT_AVERAGE_RETURN_PERCENT = -1 as const;
+const REGIME_ALERT_PROFIT_FACTOR = 0.8 as const;
 
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -721,6 +723,25 @@ export function calculateRegimePerformance(
       outcomes.filter((outcome) => outcome.marketRegime === regime),
       0,
     );
+    const samplePassed = metrics.maturedCount >= MINIMUM_REGIME_SAMPLES;
+    const returnAlert =
+      metrics.averageNetReturnPercent <= REGIME_ALERT_AVERAGE_RETURN_PERCENT;
+    const profitFactorAlert =
+      metrics.profitFactor !== null &&
+      metrics.profitFactor < REGIME_ALERT_PROFIT_FACTOR;
+    const alert =
+      samplePassed &&
+      metrics.netPnlUsd < 0 &&
+      (returnAlert || profitFactorAlert);
+    const reasons = !samplePassed
+      ? [
+          `局面別アラート判定用の採点を${metrics.maturedCount}/${MINIMUM_REGIME_SAMPLES}件収集中です。`,
+        ]
+      : alert
+        ? [
+            `30日損益がマイナスで、${returnAlert ? "平均リターン" : "Profit Factor"}が警戒ラインを下回りました。`,
+          ]
+        : ["30日局面成績に警戒条件は検出されませんでした。"];
     return {
       regime,
       maturedCount: metrics.maturedCount,
@@ -729,7 +750,13 @@ export function calculateRegimePerformance(
       averageNetReturnPercent: metrics.averageNetReturnPercent,
       profitFactor: metrics.profitFactor,
       minimumSamples: MINIMUM_REGIME_SAMPLES,
-      status: metrics.maturedCount >= MINIMUM_REGIME_SAMPLES ? "ready" : "collecting",
+      status: !samplePassed ? "collecting" : alert ? "alert" : "monitoring",
+      alert,
+      limits: {
+        averageNetReturnPercent: REGIME_ALERT_AVERAGE_RETURN_PERCENT,
+        profitFactor: REGIME_ALERT_PROFIT_FACTOR,
+      },
+      reasons,
       researchOnly: true,
     };
   });

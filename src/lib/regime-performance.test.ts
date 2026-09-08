@@ -45,15 +45,52 @@ describe("regime performance", () => {
     expect(result).toHaveLength(5);
     expect(result.find((item) => item.regime === "uptrend")).toMatchObject({
       maturedCount: 10,
-      status: "ready",
+      status: "monitoring",
+      alert: false,
       winRate: 100,
       netPnlUsd: 10,
     });
     expect(result.find((item) => item.regime === "range")).toMatchObject({
       maturedCount: 2,
       status: "collecting",
+      alert: false,
       netPnlUsd: -1,
     });
     expect(result.reduce((sum, item) => sum + item.maturedCount, 0)).toBe(12);
+  });
+
+  it("raises a research-only alert after ten materially weak outcomes", () => {
+    const outcomes = Array.from(
+      { length: 10 },
+      (_, index) => outcome("downtrend", -1.25, index),
+    );
+    const performance = calculateRegimePerformance(outcomes).find(
+      (item) => item.regime === "downtrend",
+    );
+
+    expect(performance).toMatchObject({
+      maturedCount: 10,
+      status: "alert",
+      alert: true,
+      averageNetReturnPercent: -1.25,
+      profitFactor: 0,
+      researchOnly: true,
+    });
+  });
+
+  it("does not alert on losses before the minimum sample size", () => {
+    const outcomes = Array.from(
+      { length: 9 },
+      (_, index) => outcome("high-volatility", -5, index),
+    );
+    const performance = calculateRegimePerformance(outcomes).find(
+      (item) => item.regime === "high-volatility",
+    );
+
+    expect(performance).toMatchObject({
+      maturedCount: 9,
+      status: "collecting",
+      alert: false,
+    });
   });
 });
