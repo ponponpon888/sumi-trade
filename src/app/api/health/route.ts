@@ -4,6 +4,7 @@ import {
   isPaperJournalConfigured,
 } from "@/lib/paper-journal";
 import { getSafetyControlSnapshot } from "@/lib/safety-control";
+import { auditRuntimeConfiguration } from "@/lib/runtime-config";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export async function GET() {
     walletAddress ? getPaperJournalSnapshot(walletAddress) : Promise.resolve(null),
   ]);
   const nowMs = Date.now();
+  const runtimeConfiguration = auditRuntimeConfiguration();
   const paperEngineStatus = journal
     ? getPaperEngineHealth({
         journalStatus: journal.status,
@@ -27,11 +29,12 @@ export async function GET() {
     {
       ok: true,
       service: "sumi-trade-lab",
+      buildVersion: "1.8.0",
       mode: "paper",
       executionLocked: true,
+      configurationStatus: runtimeConfiguration.status,
+      runtimeConfiguration,
       paperJournalConfigured: isPaperJournalConfigured(),
-      dashboardAuthConfigured: Boolean(process.env.DASHBOARD_PASSWORD?.trim()),
-      safetyControlConfigured: Boolean(process.env.SAFETY_CONTROL_SECRET?.trim()),
       emergencyStop: safety.emergencyStop,
       safetyStatus: safety.status,
       paperEngineStatus,

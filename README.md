@@ -130,6 +130,14 @@ Invoke-RestMethod -Method Post -Uri "https://sumi-trade-lab.vercel.app/api/safet
 
 ダッシュボードには観測時間・24時間網羅率・最新記録の鮮度・総合運用ゲートを表示します。`/api/health` でも同じ状態を確認できますが、ウォレットアドレス、Redis接続情報、Bearer secretは返しません。条件通過後も `PAPER MODE` と `executionLocked: true` は解除されず、実売買へ自動移行しません。
 
+## v1.8 本番設定監査
+
+`/api/health` は、本番運用に必要なウォレット、Cron secret、Redis、ダッシュボード認証、緊急停止secret、Ethereum RPC、緊急停止値の妥当性をBooleanと不足キー名だけで返します。環境変数の値はレスポンスへ含めません。
+
+Cron・ダッシュボード・安全制御のsecretは16文字以上を合格条件とし、RedisはUpstash名またはVercel KV互換名のURL・トークン組を確認します。全項目が揃わない場合は `configurationStatus: blocked` とし、`PAPER MODE` と実行ハードロックを維持します。
+
+GitHub Actionsはmain更新後と毎時17分に本番healthを確認します。デプロイ直後はv1.8が反映されるまで最大5分待機し、設定不足、安全制御取得不能、紙上エンジン停止、PAPER MODEまたは実行ロックの逸脱を失敗として通知対象にします。
+
 双方向見積はルートAPIの読み取り結果であり、実際のオンチェーン約定や売却成功を保証するものではありません。見積の有効時間は30秒として扱い、API停止時は安全側へ閉じて新規BUYを止めます。
 
 バックテストとモンテカルロ再標本化は将来の利益や損失確率を保証しません。標準設定では片道ガス代を4ドル、スリッページを0.35%として保守的に判定します。約500ドル規模のEthereumメインネット運用では、チャートが良くてもコストゲートや耐久試験で注文を見送ることがあります。
