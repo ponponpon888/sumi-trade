@@ -912,7 +912,7 @@ function DriftModelCard({
   return (
     <article className={`model-drift-card model-drift-card-${drift.status}`}>
       <div className="model-drift-card-heading">
-        <div><span>{label}</span><strong>7D VS 30D</strong></div>
+        <div><span>{label}</span><strong>RECENT 7D VS PREVIOUS 23D</strong></div>
         <span className={`portfolio-risk-status model-drift-status-${drift.status}`}>
           {modelDriftLabels[drift.status]}
         </span>
@@ -924,7 +924,7 @@ function DriftModelCard({
           <small>{drift.recentSamples}/{drift.limits.minimumRecentSamples} SETTLED</small>
         </div>
         <div>
-          <span>30D BASELINE</span>
+          <span>PREVIOUS 23D</span>
           <strong>{drift.baselineSamples ? signedPercent(drift.baselineAverageNetReturnPercent) : "—"}</strong>
           <small>{drift.baselineSamples}/{drift.limits.minimumBaselineSamples} SETTLED</small>
         </div>
@@ -1249,7 +1249,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.12</span>
+          <span>SUMI TRADE LAB / BUILD 1.13</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

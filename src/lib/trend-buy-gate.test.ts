@@ -38,7 +38,7 @@ function drift(blockNewBuys: boolean): ModelDriftAssessment {
     status: blockNewBuys ? "degraded" : "stable",
     blockNewBuys,
     recentDays: 7,
-    baselineDays: 30,
+    baselineDays: 23,
     recentSamples: 12,
     baselineSamples: 35,
     recentNetPnlUsd: blockNewBuys ? -20 : 20,
@@ -49,7 +49,7 @@ function drift(blockNewBuys: boolean): ModelDriftAssessment {
     baselineProfitFactor: 1.4,
     limits: {
       minimumRecentSamples: 10,
-      minimumBaselineSamples: 30,
+      minimumBaselineSamples: 20,
       averageReturnDropPercentagePoints: 1.5,
       recentProfitFactor: 0.8,
       baselineProfitFactor: 1.2,

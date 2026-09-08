@@ -43,6 +43,13 @@ function journal(
         performance(30, 0, 0, 0, null),
       ],
     },
+    driftPerformanceByModel: {
+      chart: { recent, baseline },
+      "community-trend": {
+        recent: performance(7, 0, 0, 0, null),
+        baseline: performance(30, 0, 0, 0, null),
+      },
+    },
     ...overrides,
   };
 }
@@ -103,11 +110,10 @@ describe("model drift", () => {
     const chartRecent = performance(7, 12, 0.5, 20, 1.3);
     const chartBaseline = performance(30, 35, 0.7, 80, 1.5);
     const input = journal(chartRecent, chartBaseline);
-    input.periodPerformanceByModel["community-trend"] = [
-      performance(1, 2, -1, -5, 0.4),
-      performance(7, 12, -1.1, -55, 0.6),
-      performance(30, 35, 0.8, 90, 1.4),
-    ];
+    input.driftPerformanceByModel["community-trend"] = {
+      recent: performance(7, 12, -1.1, -55, 0.6),
+      baseline: performance(30, 35, 0.8, 90, 1.4),
+    };
 
     expect(assessModelDrift(input, "chart").status).toBe("stable");
     expect(assessModelDrift(input, "community-trend")).toMatchObject({

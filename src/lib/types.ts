@@ -327,7 +327,7 @@ export interface ModelDriftAssessment {
   status: "stable" | "degraded" | "collecting" | "unavailable";
   blockNewBuys: boolean;
   recentDays: 7;
-  baselineDays: 30;
+  baselineDays: 23;
   recentSamples: number;
   baselineSamples: number;
   recentNetPnlUsd: number;
@@ -338,7 +338,7 @@ export interface ModelDriftAssessment {
   baselineProfitFactor: number | null;
   limits: {
     minimumRecentSamples: 10;
-    minimumBaselineSamples: 30;
+    minimumBaselineSamples: 20;
     averageReturnDropPercentagePoints: 1.5;
     recentProfitFactor: 0.8;
     baselineProfitFactor: 1.2;
@@ -527,6 +527,20 @@ export interface PaperPeriodPerformance {
   maxDrawdownPercent: number;
 }
 
+export interface PaperDriftWindowPerformance {
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+  profitFactor: number | null;
+  maxDrawdownPercent: number;
+}
+
+export interface PaperDriftPerformance {
+  recent: PaperDriftWindowPerformance;
+  baseline: PaperDriftWindowPerformance;
+}
+
 export interface PaperAssetPerformance {
   symbol: string;
   maturedCount: number;
@@ -576,6 +590,7 @@ export interface PaperJournalSnapshot {
   modelPerformance: Record<PaperSignalModel, PaperModelPerformance>;
   periodPerformance: PaperPeriodPerformance[];
   periodPerformanceByModel: Record<PaperSignalModel, PaperPeriodPerformance[]>;
+  driftPerformanceByModel: Record<PaperSignalModel, PaperDriftPerformance>;
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   recentOutcomes: PaperTradeOutcome[];

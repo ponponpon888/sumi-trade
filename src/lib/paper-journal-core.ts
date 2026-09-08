@@ -2,6 +2,7 @@ import type {
   ChartModelSnapshot,
   PaperJournalSnapshot,
   PaperAssetPerformance,
+  PaperDriftPerformance,
   PaperModelPerformance,
   PaperOperationalReadiness,
   PaperQualification,
@@ -549,6 +550,43 @@ function periodPerformance(
   });
 }
 
+function driftWindowMetrics(
+  outcomes: PaperTradeOutcome[],
+  startingCapital: number,
+): PaperDriftPerformance["recent"] {
+  const metrics = calculateOutcomeMetrics(outcomes, startingCapital);
+  return {
+    maturedCount: metrics.maturedCount,
+    winRate: metrics.winRate,
+    netPnlUsd: metrics.netPnlUsd,
+    averageNetReturnPercent: metrics.averageNetReturnPercent,
+    profitFactor: metrics.profitFactor,
+    maxDrawdownPercent: metrics.maxDrawdownPercent,
+  };
+}
+
+function driftPerformance(
+  outcomes: PaperTradeOutcome[],
+  nowMs: number,
+  startingCapital: number,
+): PaperDriftPerformance {
+  const recentCutoff = nowMs - 7 * 24 * 60 * 60 * 1_000;
+  const baselineCutoff = nowMs - 30 * 24 * 60 * 60 * 1_000;
+  return {
+    recent: driftWindowMetrics(
+      outcomes.filter((outcome) => outcomeTimeMs(outcome) >= recentCutoff),
+      startingCapital,
+    ),
+    baseline: driftWindowMetrics(
+      outcomes.filter((outcome) => {
+        const timestamp = outcomeTimeMs(outcome);
+        return timestamp >= baselineCutoff && timestamp < recentCutoff;
+      }),
+      startingCapital,
+    ),
+  };
+}
+
 function assetPerformance(
   outcomes: PaperTradeOutcome[],
   startingCapital: number,
@@ -699,6 +737,16 @@ export function emptyPaperJournal(
         maxDrawdownPercent: 0,
       })),
     },
+    driftPerformanceByModel: {
+      chart: {
+        recent: driftWindowMetrics([], 0),
+        baseline: driftWindowMetrics([], 0),
+      },
+      "community-trend": {
+        recent: driftWindowMetrics([], 0),
+        baseline: driftWindowMetrics([], 0),
+      },
+    },
     assetPerformance: [],
     performanceTimeline: [],
     recentOutcomes: [],
@@ -732,6 +780,9 @@ export function evaluatePaperJournal(
   const allAnalyticsOutcomes = collectPaperTradeOutcomes(analyticsRecords, nowMs);
   const analyticsOutcomes = allAnalyticsOutcomes.filter(
     (outcome) => signalModel(outcome) === "chart",
+  );
+  const communityAnalyticsOutcomes = allAnalyticsOutcomes.filter(
+    (outcome) => signalModel(outcome) === "community-trend",
   );
   const startingCapital = records[0]?.portfolioValueUsd ?? 0;
   const analyticsStartingCapital =
@@ -819,9 +870,19 @@ export function evaluatePaperJournal(
         analyticsStartingCapital,
       ),
       "community-trend": periodPerformance(
-        allAnalyticsOutcomes.filter(
-          (outcome) => signalModel(outcome) === "community-trend",
-        ),
+        communityAnalyticsOutcomes,
+        nowMs,
+        analyticsStartingCapital,
+      ),
+    },
+    driftPerformanceByModel: {
+      chart: driftPerformance(
+        analyticsOutcomes,
+        nowMs,
+        analyticsStartingCapital,
+      ),
+      "community-trend": driftPerformance(
+        communityAnalyticsOutcomes,
         nowMs,
         analyticsStartingCapital,
       ),

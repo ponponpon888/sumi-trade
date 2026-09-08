@@ -2,12 +2,12 @@ import type {
   ModelDriftAssessment,
   ModelDriftSnapshot,
   PaperJournalSnapshot,
-  PaperPeriodPerformance,
+  PaperDriftWindowPerformance,
   PaperSignalModel,
 } from "@/lib/types";
 
 const MINIMUM_RECENT_SAMPLES = 10 as const;
-const MINIMUM_BASELINE_SAMPLES = 30 as const;
+const MINIMUM_BASELINE_SAMPLES = 20 as const;
 const AVERAGE_RETURN_DROP_PERCENTAGE_POINTS = 1.5 as const;
 const RECENT_PROFIT_FACTOR_LIMIT = 0.8 as const;
 const BASELINE_PROFIT_FACTOR_FLOOR = 1.2 as const;
@@ -25,22 +25,12 @@ function round(value: number, digits = 2): number {
   return Math.round(value * factor) / factor;
 }
 
-function period(
-  journal: PaperJournalSnapshot,
-  model: PaperSignalModel,
-  days: 7 | 30,
-): PaperPeriodPerformance | undefined {
-  return journal.periodPerformanceByModel[model].find(
-    (item) => item.days === days,
-  );
-}
-
 function result(
   status: ModelDriftAssessment["status"],
   blockNewBuys: boolean,
   model: PaperSignalModel,
-  recent: PaperPeriodPerformance | undefined,
-  baseline: PaperPeriodPerformance | undefined,
+  recent: PaperDriftWindowPerformance | undefined,
+  baseline: PaperDriftWindowPerformance | undefined,
   reasons: string[],
 ): ModelDriftAssessment {
   const recentAverage = recent?.averageNetReturnPercent ?? 0;
@@ -50,7 +40,7 @@ function result(
     status,
     blockNewBuys,
     recentDays: 7,
-    baselineDays: 30,
+    baselineDays: 23,
     recentSamples: recent?.maturedCount ?? 0,
     baselineSamples: baseline?.maturedCount ?? 0,
     recentNetPnlUsd: recent?.netPnlUsd ?? 0,
@@ -68,8 +58,9 @@ export function assessModelDrift(
   journal: PaperJournalSnapshot,
   model: PaperSignalModel,
 ): ModelDriftAssessment {
-  const recent = period(journal, model, 7);
-  const baseline = period(journal, model, 30);
+  const performance = journal.driftPerformanceByModel[model];
+  const recent = performance?.recent;
+  const baseline = performance?.baseline;
 
   if (!journal.storageConfigured || journal.status === "error" || !recent || !baseline) {
     return result(
@@ -90,7 +81,7 @@ export function assessModelDrift(
   }
   if (baseline.maturedCount < MINIMUM_BASELINE_SAMPLES) {
     missingSamples.push(
-      `30日結果 ${baseline.maturedCount}/${MINIMUM_BASELINE_SAMPLES}件`,
+      `直前23日結果 ${baseline.maturedCount}/${MINIMUM_BASELINE_SAMPLES}件`,
     );
   }
   if (missingSamples.length > 0) {
@@ -120,12 +111,12 @@ export function assessModelDrift(
 
   if (returnBreakdown) {
     reasons.push(
-      `7日平均リターンが30日基準から${round(returnDrop)}ポイント低下し、7日損益がマイナス`,
+      `直近7日平均リターンが直前23日から${round(returnDrop)}ポイント低下し、7日損益がマイナス`,
     );
   }
   if (profitFactorBreakdown) {
     reasons.push(
-      `30日PF ${baseline.profitFactor?.toFixed(2)}に対し7日PF ${recentProfitFactor.toFixed(2)}へ低下`,
+      `直前23日PF ${baseline.profitFactor?.toFixed(2)}に対し7日PF ${recentProfitFactor.toFixed(2)}へ低下`,
     );
   }
   if (reasons.length > 0) {
@@ -138,7 +129,7 @@ export function assessModelDrift(
     model,
     recent,
     baseline,
-    ["7日成績に、30日基準からの重大な劣化は検出されませんでした。"],
+    ["直近7日成績に、直前23日からの重大な劣化は検出されませんでした。"],
   );
 }
 

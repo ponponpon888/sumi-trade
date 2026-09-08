@@ -178,7 +178,7 @@ function data(price: number, direction: "BUY" | "SELL") {
         status: "collecting",
         blockNewBuys: false,
         recentDays: 7,
-        baselineDays: 30,
+        baselineDays: 23,
         recentSamples: 0,
         baselineSamples: 0,
         recentNetPnlUsd: 0,
@@ -189,7 +189,7 @@ function data(price: number, direction: "BUY" | "SELL") {
         baselineProfitFactor: null,
         limits: {
           minimumRecentSamples: 10,
-          minimumBaselineSamples: 30,
+          minimumBaselineSamples: 20,
           averageReturnDropPercentagePoints: 1.5,
           recentProfitFactor: 0.8,
           baselineProfitFactor: 1.2,
@@ -201,7 +201,7 @@ function data(price: number, direction: "BUY" | "SELL") {
         status: "collecting",
         blockNewBuys: false,
         recentDays: 7,
-        baselineDays: 30,
+        baselineDays: 23,
         recentSamples: 0,
         baselineSamples: 0,
         recentNetPnlUsd: 0,
@@ -212,7 +212,7 @@ function data(price: number, direction: "BUY" | "SELL") {
         baselineProfitFactor: null,
         limits: {
           minimumRecentSamples: 10,
-          minimumBaselineSamples: 30,
+          minimumBaselineSamples: 20,
           averageReturnDropPercentagePoints: 1.5,
           recentProfitFactor: 0.8,
           baselineProfitFactor: 1.2,
@@ -539,6 +539,14 @@ describe("paper journal", () => {
       [7, 2],
       [30, 3],
     ]);
+    expect(result.driftPerformanceByModel.chart).toMatchObject({
+      recent: { maturedCount: 2, netPnlUsd: -14 },
+      baseline: { maturedCount: 1, netPnlUsd: 18 },
+    });
+    expect(
+      result.driftPerformanceByModel.chart.recent.maturedCount +
+      result.driftPerformanceByModel.chart.baseline.maturedCount,
+    ).toBe(3);
     expect(result.assetPerformance[0]).toMatchObject({
       symbol: "TEST",
       maturedCount: 3,
