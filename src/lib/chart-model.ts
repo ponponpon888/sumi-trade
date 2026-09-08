@@ -761,6 +761,7 @@ export function createUnavailableChartAnalysis(
     reasons: ["履歴データが取得できないため、新規注文を禁止"],
     lastPrice: null,
     sparkline: [],
+    correlationSeries: [],
     timeframes: [],
     regime: null,
     risk: null,
@@ -768,6 +769,8 @@ export function createUnavailableChartAnalysis(
     strategyComparison: compareStrategies([]),
   };
 }
+
+export const MAX_CHART_DATA_AGE_SECONDS = 15 * 60;
 
 export function analyzeChart(
   symbol: string,
@@ -780,12 +783,34 @@ export function analyzeChart(
   },
 ): ChartAnalysis {
   const candles = normalizeCandles(rawCandles, 5 * 60, nowSeconds);
+  const latestCandle = candles.at(-1);
+  const dataAgeSeconds = latestCandle
+    ? nowSeconds - (latestCandle.timestamp + 5 * 60)
+    : Number.POSITIVE_INFINITY;
+  if (latestCandle && dataAgeSeconds > MAX_CHART_DATA_AGE_SECONDS) {
+    return {
+      ...createUnavailableChartAnalysis(symbol, "最新の確定足が古いため判定を停止しました。"),
+      lastPrice: latestCandle.close,
+      sparkline: candles.slice(-48).map((candle) => candle.close),
+      correlationSeries: candles.slice(-48).map((candle) => ({
+        timestamp: candle.timestamp,
+        price: candle.close,
+      })),
+      backtest: runBacktest(candles),
+      strategyComparison: compareStrategies(candles),
+      reasons: [`最終確定足が${Math.floor(dataAgeSeconds / 60)}分遅延（上限15分）`],
+    };
+  }
   if (candles.length < MIN_MODEL_CANDLES) {
     return {
       ...createUnavailableChartAnalysis(symbol, "判定に必要なローソク足が不足しています。"),
       status: "insufficient",
       lastPrice: candles.at(-1)?.close ?? null,
       sparkline: candles.slice(-48).map((candle) => candle.close),
+      correlationSeries: candles.slice(-48).map((candle) => ({
+        timestamp: candle.timestamp,
+        price: candle.close,
+      })),
       // Historical liquidity snapshots are not available. Do not project the
       // current pool state backward into the backtest.
       backtest: runBacktest(candles),
@@ -817,6 +842,10 @@ export function analyzeChart(
     reasons: model.reasons,
     lastPrice: candles.at(-1)?.close ?? null,
     sparkline: candles.slice(-48).map((candle) => candle.close),
+    correlationSeries: candles.slice(-48).map((candle) => ({
+      timestamp: candle.timestamp,
+      price: candle.close,
+    })),
     timeframes: model.timeframes,
     regime: model.regime,
     risk,

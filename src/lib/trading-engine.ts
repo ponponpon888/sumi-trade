@@ -4,12 +4,17 @@ import { MAX_CHART_ASSETS } from "@/lib/config";
 import {
   analyzeChart,
   createUnavailableChartAnalysis,
+  MAX_CHART_DATA_AGE_SECONDS,
 } from "@/lib/chart-model";
 import { getPoolOhlcv } from "@/lib/ohlcv";
 import { normalizeCandles } from "@/lib/indicators";
 import { getPaperJournalSnapshot } from "@/lib/paper-journal";
 import { getPortfolioSnapshot } from "@/lib/portfolio";
 import { assessPortfolioRisk } from "@/lib/portfolio-risk";
+import {
+  applySafetyControlToRisk,
+  getSafetyControlSnapshot,
+} from "@/lib/safety-control";
 import { createStrategyPlan } from "@/lib/strategy";
 import { getTrendScoutSnapshot } from "@/lib/trend-scout";
 import type {
@@ -19,6 +24,7 @@ import type {
   PortfolioAsset,
   PortfolioSnapshot,
   StrategyPlan,
+  SafetyControlSnapshot,
   TrendScoutSnapshot,
 } from "@/lib/types";
 
@@ -63,17 +69,27 @@ export async function getChartModelSnapshot(
       }),
     ),
     (async (): Promise<ChartModelSnapshot["ethBenchmark"]> => {
-      if (!ethPairAddress) return { status: "unavailable", sparkline: [] };
+      if (!ethPairAddress) {
+        return { status: "unavailable", sparkline: [], correlationSeries: [] };
+      }
       try {
         const candles = await getPoolOhlcv(ethPairAddress);
-        const sparkline = normalizeCandles(candles)
-          .slice(-48)
-          .map((candle) => candle.close);
-        return sparkline.length >= 13
-          ? { status: "ready", sparkline }
-          : { status: "unavailable", sparkline: [] };
+        const nowSeconds = Math.floor(Date.now() / 1_000);
+        const normalized = normalizeCandles(candles, 5 * 60, nowSeconds).slice(-48);
+        const sparkline = normalized.map((candle) => candle.close);
+        const correlationSeries = normalized.map((candle) => ({
+          timestamp: candle.timestamp,
+          price: candle.close,
+        }));
+        const latest = normalized.at(-1);
+        const fresh = latest
+          ? nowSeconds - (latest.timestamp + 5 * 60) <= MAX_CHART_DATA_AGE_SECONDS
+          : false;
+        return sparkline.length >= 13 && fresh
+          ? { status: "ready", sparkline, correlationSeries }
+          : { status: "unavailable", sparkline: [], correlationSeries: [] };
       } catch {
-        return { status: "unavailable", sparkline: [] };
+        return { status: "unavailable", sparkline: [], correlationSeries: [] };
       }
     })(),
   ]);
@@ -111,14 +127,19 @@ export async function getTradingDashboardData(): Promise<{
   plan: StrategyPlan;
   trendScout: TrendScoutSnapshot;
   journal: PaperJournalSnapshot;
+  safetyControl: SafetyControlSnapshot;
 }> {
   const snapshot = await getPortfolioSnapshot();
-  const [chartModel, rawTrendScout, journal] = await Promise.all([
+  const [chartModel, rawTrendScout, journal, safetyControl] = await Promise.all([
     getChartModelSnapshot(snapshot),
     getTrendScoutSnapshot(snapshot),
     getPaperJournalSnapshot(snapshot.walletAddress),
+    getSafetyControlSnapshot(),
   ]);
-  const portfolioRisk = assessPortfolioRisk(snapshot, chartModel, journal);
+  const portfolioRisk = applySafetyControlToRisk(
+    assessPortfolioRisk(snapshot, chartModel, journal),
+    safetyControl,
+  );
   const plan = createStrategyPlan(
     snapshot,
     chartModel.analyses,
@@ -134,5 +155,5 @@ export async function getTradingDashboardData(): Promise<{
         ],
       }
     : rawTrendScout;
-  return { snapshot, chartModel, plan, trendScout, journal };
+  return { snapshot, chartModel, plan, trendScout, journal, safetyControl };
 }

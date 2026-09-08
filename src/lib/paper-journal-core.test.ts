@@ -2,18 +2,30 @@ import { describe, expect, it } from "vitest";
 
 import { compareStrategies } from "@/lib/chart-model";
 import {
+  calculateOperationalReadiness,
   createPaperScanRecord,
   evaluatePaperJournal,
+  MINIMUM_OBSERVATION_HOURS,
 } from "@/lib/paper-journal-core";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
   PaperScanRecord,
+  PaperQualification,
   PortfolioSnapshot,
   StrategyPlan,
 } from "@/lib/types";
 
 const WALLET = "0x0000000000000000000000000000000000000001";
+const PASSING_QUALIFICATION: PaperQualification = {
+  minimumSamples: 30,
+  samplePassed: true,
+  netProfitPassed: true,
+  profitFactorPassed: true,
+  drawdownPassed: true,
+  costCoveragePassed: true,
+  overallPassed: true,
+};
 
 function analysis(price: number, direction: "BUY" | "SELL"): ChartAnalysis {
   return {
@@ -26,6 +38,7 @@ function analysis(price: number, direction: "BUY" | "SELL"): ChartAnalysis {
     reasons: [],
     lastPrice: price,
     sparkline: [],
+    correlationSeries: [],
     timeframes: [],
     regime: {
       regime: "uptrend",
@@ -118,7 +131,14 @@ function data(price: number, direction: "BUY" | "SELL") {
     cadenceMinutes: 5,
     requestedAssetCount: 1,
     readyAssetCount: 1,
-    ethBenchmark: { status: "ready", sparkline: Array.from({ length: 20 }, (_, index) => 100 + index) },
+    ethBenchmark: {
+      status: "ready",
+      sparkline: Array.from({ length: 20 }, (_, index) => 100 + index),
+      correlationSeries: Array.from({ length: 20 }, (_, index) => ({
+        timestamp: index * 300,
+        price: 100 + index,
+      })),
+    },
     analyses: [analysis(price, direction)],
     warnings: [],
   };
@@ -134,10 +154,14 @@ function data(price: number, direction: "BUY" | "SELL") {
       maxSingleAssetPercent: 0,
       maxEthCorrelation: null,
       maxEthCorrelationSymbol: null,
+      maxEthCorrelationSampleCount: null,
+      minimumCorrelationSampleCount: null,
+      correlationMethod: "timestamp-inner-join",
       highCorrelationPairs: [],
       dailyNetPnlUsd: 0,
       dailyLossPercent: 0,
       longestLossStreak: 0,
+      currentLossStreak: 0,
       limits: {
         singleAssetPercent: 35,
         correlatedExposurePercent: 50,
@@ -185,7 +209,11 @@ describe("paper journal", () => {
     expect(first.id).toBe(retry.id);
     expect(first.generatedAt).not.toBe(retry.generatedAt);
     expect(first.executionLocked).toBe(true);
-    expect(first.signals[0]).toMatchObject({ direction: "BUY", notionalUsd: 200 });
+    expect(first.signals[0]).toMatchObject({
+      decisionId: `${first.id}:chart:TEST:BUY`,
+      direction: "BUY",
+      notionalUsd: 200,
+    });
   });
 
   it("settles a buy six hours later after subtracting costs", () => {
@@ -407,5 +435,146 @@ describe("paper journal", () => {
       winRate: 0,
       netPnlUsd: -12,
     });
+  });
+
+  it("keeps the seven-day promotion window while comparing 24h, 7d, and 30d", () => {
+    const now = Date.UTC(2026, 8, 30, 12);
+    const pair = (daysAgo: number, entryPrice: number, exitPrice: number) => {
+      const entryTime = now - daysAgo * 24 * 60 * 60 * 1_000 - 7 * 60 * 60 * 1_000;
+      const entry = createPaperScanRecord(data(entryPrice, "BUY"), entryTime);
+      const exit = createPaperScanRecord(
+        data(exitPrice, "BUY"),
+        entryTime + 6 * 60 * 60 * 1_000,
+      );
+      return [entry, { ...exit, signals: [] }];
+    };
+    const records = [
+      ...pair(25, 100, 110),
+      ...pair(5, 100, 90),
+      ...pair(0, 100, 105),
+    ];
+
+    const result = evaluatePaperJournal(records, now);
+
+    expect(result.windowDays).toBe(7);
+    expect(result.analyticsWindowDays).toBe(30);
+    expect(result.maturedCount).toBe(2);
+    expect(result.periodPerformance.map((period) => [period.days, period.maturedCount])).toEqual([
+      [1, 1],
+      [7, 2],
+      [30, 3],
+    ]);
+    expect(result.assetPerformance[0]).toMatchObject({
+      symbol: "TEST",
+      maturedCount: 3,
+      netPnlUsd: 4,
+    });
+    expect(result.performanceTimeline).toHaveLength(30);
+    expect(result.performanceTimeline.at(-1)?.cumulativeNetPnlUsd).toBe(4);
+  });
+
+  it("calculates average wins, losses, and payoff ratio from 30-day outcomes", () => {
+    const now = Date.UTC(2026, 8, 8, 12);
+    const entries = [
+      recordAt(0, 100, "BUY"),
+      recordAt(6, 110, null),
+      recordAt(7, 100, "BUY"),
+      recordAt(13, 95, null),
+    ];
+    const result = evaluatePaperJournal(entries, now);
+
+    expect(result.averageWinPercent).toBe(9);
+    expect(result.averageLossPercent).toBe(-6);
+    expect(result.payoffRatio).toBe(1.5);
+  });
+
+  it("separates the historical maximum loss streak from the current streak", () => {
+    const records = [
+      recordAt(0, 100, "BUY"),
+      recordAt(6, 90, null),
+      recordAt(7, 100, "BUY"),
+      recordAt(13, 90, null),
+      recordAt(14, 100, "BUY"),
+      recordAt(20, 90, null),
+      recordAt(21, 100, "BUY"),
+      recordAt(27, 110, null),
+    ];
+
+    const result = evaluatePaperJournal(
+      records,
+      Date.UTC(2026, 8, 8, 4),
+    );
+
+    expect(result.longestLossStreak).toBe(3);
+    expect(result.currentLossStreak).toBe(0);
+    expect(result.modelPerformance.chart.currentLossStreak).toBe(0);
+  });
+});
+
+describe("paper operational readiness", () => {
+  const now = Date.UTC(2026, 8, 8, 12);
+
+  function emptyRecordAt(timestamp: number): PaperScanRecord {
+    return {
+      ...createPaperScanRecord(data(100, "BUY"), timestamp),
+      signals: [],
+    };
+  }
+
+  it("requires a full seven-day observation period even when model metrics pass", () => {
+    const records = [emptyRecordAt(now - 24 * 60 * 60 * 1_000), emptyRecordAt(now)];
+    const readiness = calculateOperationalReadiness(
+      records,
+      now,
+      PASSING_QUALIFICATION,
+    );
+
+    expect(readiness.observationHours).toBe(24);
+    expect(readiness.observationPassed).toBe(false);
+    expect(readiness.overallPassed).toBe(false);
+    expect(readiness.status).toBe("collecting");
+  });
+
+  it("passes only with seven days, healthy 24h coverage, a fresh scan, and model metrics", () => {
+    const fiveMinutes = 5 * 60 * 1_000;
+    const recentRecords = Array.from({ length: 288 }, (_, index) =>
+      emptyRecordAt(now - (287 - index) * fiveMinutes),
+    );
+    const records = [
+      emptyRecordAt(now - MINIMUM_OBSERVATION_HOURS * 60 * 60 * 1_000),
+      ...recentRecords,
+    ];
+    const readiness = calculateOperationalReadiness(
+      records,
+      now,
+      PASSING_QUALIFICATION,
+    );
+
+    expect(readiness.observationPassed).toBe(true);
+    expect(readiness.scanCoverage24hPercent).toBe(100);
+    expect(readiness.scanCoveragePassed).toBe(true);
+    expect(readiness.latestScanFresh).toBe(true);
+    expect(readiness.overallPassed).toBe(true);
+    expect(readiness.status).toBe("ready");
+  });
+
+  it("blocks readiness when the latest scan is stale", () => {
+    const fiveMinutes = 5 * 60 * 1_000;
+    const records = [
+      emptyRecordAt(now - MINIMUM_OBSERVATION_HOURS * 60 * 60 * 1_000),
+      ...Array.from({ length: 285 }, (_, index) =>
+        emptyRecordAt(now - 15 * 60_000 - (284 - index) * fiveMinutes),
+      ),
+    ];
+    const readiness = calculateOperationalReadiness(
+      records,
+      now,
+      PASSING_QUALIFICATION,
+    );
+
+    expect(readiness.scanCoveragePassed).toBe(true);
+    expect(readiness.latestScanFresh).toBe(false);
+    expect(readiness.status).toBe("blocked");
+    expect(readiness.overallPassed).toBe(false);
   });
 });

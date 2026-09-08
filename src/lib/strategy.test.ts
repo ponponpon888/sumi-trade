@@ -17,10 +17,14 @@ const PASS_PORTFOLIO_RISK: PortfolioRiskAssessment = {
   maxSingleAssetPercent: 20,
   maxEthCorrelation: 0.2,
   maxEthCorrelationSymbol: "PEPE",
+  maxEthCorrelationSampleCount: 19,
+  minimumCorrelationSampleCount: 19,
+  correlationMethod: "timestamp-inner-join",
   highCorrelationPairs: [],
   dailyNetPnlUsd: 0,
   dailyLossPercent: 0,
   longestLossStreak: 0,
+  currentLossStreak: 0,
   limits: {
     singleAssetPercent: 35,
     correlatedExposurePercent: 50,
@@ -99,6 +103,7 @@ function chart(
     reasons: [],
     lastPrice: 0.1,
     sparkline: [],
+    correlationSeries: [],
     timeframes: [],
     regime: {
       regime: "uptrend",

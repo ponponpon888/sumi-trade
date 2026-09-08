@@ -7,7 +7,7 @@ import {
   createPaperScanRecord,
   emptyPaperJournal,
   evaluatePaperJournal,
-  JOURNAL_WINDOW_DAYS,
+  JOURNAL_RECORD_WINDOW_DAYS,
   OUTCOME_HORIZON_HOURS,
 } from "@/lib/paper-journal-core";
 import type {
@@ -19,7 +19,7 @@ import type {
   TrendScoutSnapshot,
 } from "@/lib/types";
 
-const RECORD_TTL_SECONDS = 9 * 24 * 60 * 60;
+const RECORD_TTL_SECONDS = 32 * 24 * 60 * 60;
 const READ_BATCH_SIZE = 250;
 
 type DashboardData = {
@@ -80,7 +80,7 @@ async function readRecords(
   const prefix = namespace(walletAddress);
   const indexKey = `${prefix}:index`;
   const windowStart =
-    nowMs - JOURNAL_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+    nowMs - JOURNAL_RECORD_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
   const ids = await redis.zrange<string[]>(indexKey, windowStart, nowMs, {
     byScore: true,
   });
@@ -103,7 +103,7 @@ async function saveRecord(redis: Redis, record: PaperScanRecord): Promise<void> 
   const indexKey = `${prefix}:index`;
   const recordKey = `${prefix}:record:${record.id}`;
   const windowStart =
-    record.bucketTimeMs - JOURNAL_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+    record.bucketTimeMs - JOURNAL_RECORD_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
   const pipeline = redis.pipeline();
   pipeline.set(recordKey, record, { ex: RECORD_TTL_SECONDS });
   pipeline.zadd(indexKey, {
@@ -152,7 +152,7 @@ export async function getPaperJournalSnapshot(
   if (!redis) {
     return emptyPaperJournal(
       "disabled",
-      "永続ストレージ未接続のため、7日間記録はまだ開始していません。",
+      "永続ストレージ未接続のため、7日判定・30日分析はまだ開始していません。",
     );
   }
 

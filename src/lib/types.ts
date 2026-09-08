@@ -184,6 +184,11 @@ export interface ChartRiskPlan {
   execution: ExecutionCostEstimate;
 }
 
+export interface CorrelationPricePoint {
+  timestamp: number;
+  price: number;
+}
+
 export interface ChartAnalysis {
   symbol: string;
   status: ChartStatus;
@@ -194,6 +199,7 @@ export interface ChartAnalysis {
   reasons: string[];
   lastPrice: number | null;
   sparkline: number[];
+  correlationSeries: CorrelationPricePoint[];
   timeframes: TimeframeIndicators[];
   regime: RegimeAssessment | null;
   risk: ChartRiskPlan | null;
@@ -211,6 +217,7 @@ export interface ChartModelSnapshot {
   ethBenchmark: {
     status: "ready" | "unavailable";
     sparkline: number[];
+    correlationSeries: CorrelationPricePoint[];
   };
   warnings: string[];
 }
@@ -286,6 +293,7 @@ export interface PortfolioCorrelationPair {
   leftSymbol: string;
   rightSymbol: string;
   correlation: number;
+  sampleCount: number;
   combinedExposurePercent: number;
 }
 
@@ -296,10 +304,14 @@ export interface PortfolioRiskAssessment {
   maxSingleAssetPercent: number;
   maxEthCorrelation: number | null;
   maxEthCorrelationSymbol: string | null;
+  maxEthCorrelationSampleCount: number | null;
+  minimumCorrelationSampleCount: number | null;
+  correlationMethod: "timestamp-inner-join";
   highCorrelationPairs: PortfolioCorrelationPair[];
   dailyNetPnlUsd: number;
   dailyLossPercent: number;
   longestLossStreak: number;
+  currentLossStreak: number;
   limits: {
     singleAssetPercent: 35;
     correlatedExposurePercent: 50;
@@ -389,6 +401,7 @@ export type PaperJournalStatus =
 export type PaperSignalModel = "chart" | "community-trend";
 
 export interface PaperSignalObservation {
+  decisionId?: string;
   model?: PaperSignalModel;
   priceKey?: string;
   contractAddress?: string;
@@ -400,6 +413,15 @@ export interface PaperSignalObservation {
   notionalUsd: number;
   estimatedCostUsd: number;
   costGatePassed: boolean;
+}
+
+export interface SafetyControlSnapshot {
+  status: "monitoring" | "stopped" | "unavailable";
+  emergencyStop: boolean;
+  source: "environment" | "redis" | "unavailable";
+  executionLocked: true;
+  reason: string;
+  updatedAt: string | null;
 }
 
 export interface PaperScanRecord {
@@ -434,6 +456,19 @@ export interface PaperQualification {
   overallPassed: boolean;
 }
 
+export interface PaperOperationalReadiness {
+  status: "collecting" | "ready" | "blocked";
+  minimumObservationHours: 168;
+  observationHours: number;
+  observationPassed: boolean;
+  minimumScanCoveragePercent: 80;
+  scanCoverage24hPercent: number;
+  scanCoveragePassed: boolean;
+  latestScanFresh: boolean;
+  overallPassed: boolean;
+  reasons: string[];
+}
+
 export interface PaperModelPerformance {
   model: PaperSignalModel;
   signalCount: number;
@@ -448,7 +483,34 @@ export interface PaperModelPerformance {
   maxDrawdownUsd: number;
   maxDrawdownPercent: number;
   longestLossStreak: number;
+  currentLossStreak: number;
   qualification: PaperQualification;
+}
+
+export interface PaperPeriodPerformance {
+  days: 1 | 7 | 30;
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+  profitFactor: number | null;
+  maxDrawdownPercent: number;
+}
+
+export interface PaperAssetPerformance {
+  symbol: string;
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+  profitFactor: number | null;
+}
+
+export interface PaperPerformanceTimelinePoint {
+  date: string;
+  tradeCount: number;
+  netPnlUsd: number;
+  cumulativeNetPnlUsd: number;
 }
 
 export interface PaperJournalSnapshot {
@@ -456,6 +518,7 @@ export interface PaperJournalSnapshot {
   storageConfigured: boolean;
   executionLocked: true;
   windowDays: 7;
+  analyticsWindowDays: 30;
   horizonHours: 6;
   startedAt: string | null;
   lastScanAt: string | null;
@@ -474,8 +537,16 @@ export interface PaperJournalSnapshot {
   maxDrawdownUsd: number;
   maxDrawdownPercent: number;
   longestLossStreak: number;
+  currentLossStreak: number;
+  operationalReadiness: PaperOperationalReadiness;
+  averageWinPercent: number;
+  averageLossPercent: number;
+  payoffRatio: number | null;
   qualification: PaperQualification;
   modelPerformance: Record<PaperSignalModel, PaperModelPerformance>;
+  periodPerformance: PaperPeriodPerformance[];
+  assetPerformance: PaperAssetPerformance[];
+  performanceTimeline: PaperPerformanceTimelinePoint[];
   recentOutcomes: PaperTradeOutcome[];
   message: string;
 }

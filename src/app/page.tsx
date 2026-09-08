@@ -46,6 +46,7 @@ export default async function Home() {
       plan={result.plan}
       journal={result.journal}
       trendScout={result.trendScout}
+      safetyControl={result.safetyControl}
     />
   );
 }

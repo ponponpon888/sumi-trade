@@ -1,5 +1,6 @@
 import type {
   ChartModelSnapshot,
+  CorrelationPricePoint,
   PaperJournalSnapshot,
   PortfolioCorrelationPair,
   PortfolioRiskAssessment,
@@ -28,6 +29,11 @@ function returns(values: number[]): number[] {
     .filter(Number.isFinite);
 }
 
+type CorrelationMeasurement = {
+  correlation: number | null;
+  sampleCount: number;
+};
+
 export function priceCorrelation(
   leftPrices: number[],
   rightPrices: number[],
@@ -55,6 +61,44 @@ export function priceCorrelation(
   const denominator = Math.sqrt(leftVariance * rightVariance);
   if (!Number.isFinite(denominator) || denominator === 0) return null;
   return round(covariance / denominator, 3);
+}
+
+export function timedPriceCorrelation(
+  leftSeries: CorrelationPricePoint[],
+  rightSeries: CorrelationPricePoint[],
+): CorrelationMeasurement {
+  const leftByTimestamp = new Map(
+    leftSeries
+      .filter((point) => Number.isFinite(point.timestamp) && point.price > 0)
+      .map((point) => [point.timestamp, point.price]),
+  );
+  const rightByTimestamp = new Map(
+    rightSeries
+      .filter((point) => Number.isFinite(point.timestamp) && point.price > 0)
+      .map((point) => [point.timestamp, point.price]),
+  );
+  const aligned = [...leftByTimestamp.entries()]
+    .filter(([timestamp]) => rightByTimestamp.has(timestamp))
+    .map(([timestamp, price]) => ({
+      timestamp,
+      left: price,
+      right: rightByTimestamp.get(timestamp) as number,
+    }))
+    .toSorted((left, right) => left.timestamp - right.timestamp);
+  const leftReturns = returns(aligned.map((point) => point.left));
+  const rightReturns = returns(aligned.map((point) => point.right));
+  const sampleCount = Math.min(leftReturns.length, rightReturns.length);
+  if (sampleCount < MINIMUM_RETURN_SAMPLES) {
+    return { correlation: null, sampleCount };
+  }
+
+  return {
+    correlation: priceCorrelation(
+      aligned.map((point) => point.left),
+      aligned.map((point) => point.right),
+    ),
+    sampleCount,
+  };
 }
 
 export function assessPortfolioRisk(
@@ -106,16 +150,23 @@ export function assessPortfolioRisk(
   const highCorrelationPairs: PortfolioCorrelationPair[] = [];
   const analyses = [...analysisBySymbol.values()];
   const missingPairCorrelations: string[] = [];
+  const observedCorrelationSamples: number[] = [];
   for (let leftIndex = 0; leftIndex < analyses.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < analyses.length; rightIndex += 1) {
       const left = analyses[leftIndex];
       const right = analyses[rightIndex];
-      const correlation = priceCorrelation(left.sparkline, right.sparkline);
+      const measurement = timedPriceCorrelation(
+        left.correlationSeries,
+        right.correlationSeries,
+      );
+      const correlation = measurement.correlation;
       const combinedExposurePercent =
         (exposureBySymbol.get(left.symbol) ?? 0) +
         (exposureBySymbol.get(right.symbol) ?? 0);
       if (correlation === null) {
-        missingPairCorrelations.push(`${left.symbol}・${right.symbol}`);
+        missingPairCorrelations.push(
+          `${left.symbol}・${right.symbol}(${measurement.sampleCount}/${MINIMUM_RETURN_SAMPLES})`,
+        );
       } else if (
         correlation >= CORRELATION_LIMIT &&
         combinedExposurePercent > CORRELATED_EXPOSURE_LIMIT_PERCENT
@@ -124,9 +175,11 @@ export function assessPortfolioRisk(
           leftSymbol: left.symbol,
           rightSymbol: right.symbol,
           correlation,
+          sampleCount: measurement.sampleCount,
           combinedExposurePercent: round(combinedExposurePercent, 1),
         });
       }
+      observedCorrelationSamples.push(measurement.sampleCount);
     }
   }
   if (missingPairCorrelations.length > 0) {
@@ -142,15 +195,20 @@ export function assessPortfolioRisk(
   }
 
   const ethCorrelations = analyses
-    .map((analysis) => ({
-      symbol: analysis.symbol,
-      correlation: priceCorrelation(
-        analysis.sparkline,
-        chartModel.ethBenchmark.sparkline,
-      ),
-    }))
+    .map((analysis) => {
+      const measurement = timedPriceCorrelation(
+        analysis.correlationSeries,
+        chartModel.ethBenchmark.correlationSeries,
+      );
+      observedCorrelationSamples.push(measurement.sampleCount);
+      return {
+        symbol: analysis.symbol,
+        correlation: measurement.correlation,
+        sampleCount: measurement.sampleCount,
+      };
+    })
     .filter(
-      (item): item is { symbol: string; correlation: number } =>
+      (item): item is { symbol: string; correlation: number; sampleCount: number } =>
         item.correlation !== null,
     )
     .toSorted((left, right) => right.correlation - left.correlation);
@@ -162,9 +220,16 @@ export function assessPortfolioRisk(
     chartModel.ethBenchmark.status === "ready" &&
     missingEthCorrelations.length > 0
   ) {
-    unavailableReasons.push(
-      `${missingEthCorrelations.map((item) => item.symbol).join("・")}のETH相関サンプル不足`,
-    );
+    const missingDetails = analyses
+      .filter((analysis) => missingEthCorrelations.some((item) => item.symbol === analysis.symbol))
+      .map((analysis) => {
+        const measurement = timedPriceCorrelation(
+          analysis.correlationSeries,
+          chartModel.ethBenchmark.correlationSeries,
+        );
+        return `${analysis.symbol}(${measurement.sampleCount}/${MINIMUM_RETURN_SAMPLES})`;
+      });
+    unavailableReasons.push(`${missingDetails.join("・")}のETH相関サンプル不足`);
   }
   const maxEthCorrelation = ethCorrelations[0] ?? null;
   if (
@@ -181,8 +246,8 @@ export function assessPortfolioRisk(
       `24時間損失${journal.dailyLossPercent.toFixed(2)}%が上限${DAILY_LOSS_LIMIT_PERCENT}%到達`,
     );
   }
-  if (journal.longestLossStreak >= LOSS_STREAK_LIMIT) {
-    reasons.push(`${journal.longestLossStreak}連敗のため新規BUY停止`);
+  if (journal.currentLossStreak >= LOSS_STREAK_LIMIT) {
+    reasons.push(`現在${journal.currentLossStreak}連敗のため新規BUY停止`);
   }
 
   const status = unavailableReasons.length > 0
@@ -202,10 +267,17 @@ export function assessPortfolioRisk(
     maxSingleAssetPercent: round(maxExposure?.percent ?? 0, 1),
     maxEthCorrelation: maxEthCorrelation?.correlation ?? null,
     maxEthCorrelationSymbol: maxEthCorrelation?.symbol ?? null,
+    maxEthCorrelationSampleCount: maxEthCorrelation?.sampleCount ?? null,
+    minimumCorrelationSampleCount:
+      observedCorrelationSamples.length > 0
+        ? Math.min(...observedCorrelationSamples)
+        : null,
+    correlationMethod: "timestamp-inner-join",
     highCorrelationPairs,
     dailyNetPnlUsd: journal.dailyNetPnlUsd,
     dailyLossPercent: journal.dailyLossPercent,
     longestLossStreak: journal.longestLossStreak,
+    currentLossStreak: journal.currentLossStreak,
     limits: {
       singleAssetPercent: SINGLE_ASSET_LIMIT_PERCENT,
       correlatedExposurePercent: CORRELATED_EXPOSURE_LIMIT_PERCENT,

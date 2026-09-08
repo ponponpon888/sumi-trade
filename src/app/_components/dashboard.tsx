@@ -10,6 +10,7 @@ import type {
   PortfolioAsset,
   PortfolioRiskAssessment,
   PortfolioSnapshot,
+  SafetyControlSnapshot,
   StrategyPlan,
   StrategySignal,
   TrendCandidate,
@@ -73,6 +74,21 @@ const onchainPreflightLabels = {
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
+}
+
+function OperationalSafetyStrip({ safety }: { safety: SafetyControlSnapshot }) {
+  const label = safety.status === "monitoring"
+    ? "SAFETY MONITORING"
+    : safety.status === "stopped"
+      ? "EMERGENCY STOP"
+      : "SAFETY DATA WAIT";
+  return (
+    <section className={`operational-safety operational-safety-${safety.status} shell`} aria-label="運用安全状態">
+      <div><i /><strong>{label}</strong><span>{safety.source.toUpperCase()}</span></div>
+      <p>{safety.reason}</p>
+      <small>{safety.updatedAt ? `UPDATED ${new Date(safety.updatedAt).toISOString()}` : "EXECUTION HARD-LOCKED"}</small>
+    </section>
+  );
 }
 
 function signedPercent(value: number): string {
@@ -608,7 +624,7 @@ function ModelPerformanceCard({
         ? "negative"
         : "muted";
   const gateLabel = performance.qualification.overallPassed
-    ? "SWITCH READY"
+    ? "METRIC PASS"
     : performance.maturedCount >= performance.qualification.minimumSamples
       ? "REJECT"
       : "COLLECTING";
@@ -632,6 +648,106 @@ function ModelPerformanceCard({
   );
 }
 
+function PerformanceCurve({ journal }: { journal: PaperJournalSnapshot }) {
+  const values = journal.performanceTimeline.map(
+    (point) => point.cumulativeNetPnlUsd,
+  );
+  const minimum = Math.min(0, ...values);
+  const maximum = Math.max(0, ...values);
+  const range = Math.max(1, maximum - minimum);
+  const points = values
+    .map((value, index) => {
+      const x = values.length > 1 ? (index / (values.length - 1)) * 100 : 0;
+      const y = 34 - ((value - minimum) / range) * 30;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const lastPoint = journal.performanceTimeline.at(-1);
+
+  return (
+    <article className="performance-curve-card">
+      <div className="performance-card-heading">
+        <div>
+          <span>30D CUMULATIVE P/L</span>
+          <strong className={lastPoint && lastPoint.cumulativeNetPnlUsd < 0 ? "negative" : "positive"}>
+            {lastPoint ? formatUsd(lastPoint.cumulativeNetPnlUsd) : "—"}
+          </strong>
+        </div>
+        <small>CHART MODEL · COST INCLUDED</small>
+      </div>
+      {values.length ? (
+        <svg className="performance-curve" viewBox="0 0 100 38" role="img" aria-label="30日間の累積ペーパー損益">
+          <line x1="0" y1={(34 - ((0 - minimum) / range) * 30).toFixed(2)} x2="100" y2={(34 - ((0 - minimum) / range) * 30).toFixed(2)} />
+          <polyline points={points} />
+        </svg>
+      ) : (
+        <p className="performance-empty">30日分析データを収集中です。</p>
+      )}
+      <div className="performance-axis"><span>30 DAYS AGO</span><span>TODAY</span></div>
+    </article>
+  );
+}
+
+function PerformanceLens({ journal }: { journal: PaperJournalSnapshot }) {
+  return (
+    <div className="performance-lens" aria-label="ペーパートレード詳細分析">
+      <div className="performance-lens-heading">
+        <div><span>PERFORMANCE LENS</span><strong>勝率の先まで見る。</strong></div>
+        <small>{journal.analyticsWindowDays}D ANALYTICS / {journal.windowDays}D PROMOTION GATE</small>
+      </div>
+
+      <div className="period-performance-grid">
+        {journal.periodPerformance.map((period) => (
+          <article key={period.days}>
+            <div><span>{period.days === 1 ? "24H" : `${period.days}D`}</span><small>{period.maturedCount} SETTLED</small></div>
+            <strong className={period.netPnlUsd > 0 ? "positive" : period.netPnlUsd < 0 ? "negative" : "muted"}>
+              {period.maturedCount ? formatUsd(period.netPnlUsd) : "—"}
+            </strong>
+            <dl>
+              <div><dt>WIN</dt><dd>{period.maturedCount ? `${period.winRate.toFixed(1)}%` : "—"}</dd></div>
+              <div><dt>PF</dt><dd>{period.profitFactor === null ? "—" : period.profitFactor.toFixed(2)}</dd></div>
+              <div><dt>MAX DD</dt><dd>{period.maturedCount ? `${period.maxDrawdownPercent.toFixed(2)}%` : "—"}</dd></div>
+            </dl>
+          </article>
+        ))}
+      </div>
+
+      <div className="performance-detail-grid">
+        <PerformanceCurve journal={journal} />
+        <article className="asset-performance-card">
+          <div className="performance-card-heading">
+            <div><span>ASSET LEADERBOARD</span><strong>30D NET P/L</strong></div>
+            <small>TOP 6 · CHART MODEL</small>
+          </div>
+          {journal.assetPerformance.length ? (
+            <div className="asset-performance-list">
+              {journal.assetPerformance.map((asset, index) => (
+                <div key={asset.symbol}>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <strong>{asset.symbol}</strong>
+                  <small>{asset.maturedCount} trades · {asset.winRate.toFixed(0)}% win</small>
+                  <strong className={asset.netPnlUsd > 0 ? "positive" : asset.netPnlUsd < 0 ? "negative" : "muted"}>
+                    {asset.netPnlUsd > 0 ? "+" : ""}{formatUsd(asset.netPnlUsd)}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="performance-empty">銘柄別に集計できる結果はまだありません。</p>
+          )}
+        </article>
+      </div>
+
+      <div className="payoff-strip">
+        <div><span>AVG WIN</span><strong>{journal.averageWinPercent ? signedPercent(journal.averageWinPercent) : "—"}</strong></div>
+        <div><span>AVG LOSS</span><strong className="negative">{journal.averageLossPercent ? signedPercent(journal.averageLossPercent) : "—"}</strong></div>
+        <div><span>PAYOFF RATIO</span><strong>{journal.payoffRatio === null ? "—" : `${journal.payoffRatio.toFixed(2)}x`}</strong></div>
+        <p>平均利益 ÷ 平均損失。勝率だけでは見えない、1回の勝ちと負けの釣り合いです。</p>
+      </div>
+    </div>
+  );
+}
+
 function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
   const progress = Math.min(
     100,
@@ -639,6 +755,7 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
   );
   const netClass =
     journal.netPnlUsd > 0 ? "positive" : journal.netPnlUsd < 0 ? "negative" : "muted";
+  const readiness = journal.operationalReadiness;
 
   return (
     <section className="journal-board shell" aria-labelledby="journal-title">
@@ -665,12 +782,43 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
         <small>{journal.message}</small>
       </div>
 
+      <div className="readiness-grid" aria-label="紙上運用準備度">
+        <div>
+          <span>OBSERVATION</span>
+          <strong className={readiness.observationPassed ? "positive" : ""}>
+            {readiness.observationHours.toFixed(1)}H
+          </strong>
+          <small>/ {readiness.minimumObservationHours}H</small>
+        </div>
+        <div>
+          <span>24H SCAN COVERAGE</span>
+          <strong className={readiness.scanCoveragePassed ? "positive" : ""}>
+            {readiness.scanCoverage24hPercent.toFixed(1)}%
+          </strong>
+          <small>target ≥ {readiness.minimumScanCoveragePercent}%</small>
+        </div>
+        <div>
+          <span>LATEST SCAN</span>
+          <strong className={readiness.latestScanFresh ? "positive" : "negative"}>
+            {readiness.latestScanFresh ? "FRESH" : "STALE"}
+          </strong>
+          <small>within 12 minutes</small>
+        </div>
+        <div>
+          <span>OPERATIONAL GATE</span>
+          <strong className={readiness.overallPassed ? "positive" : ""}>
+            {readiness.status.toUpperCase()}
+          </strong>
+          <small>paper only</small>
+        </div>
+      </div>
+
       <div className="journal-metrics">
         <div><span>WIN RATE</span><strong>{journal.maturedCount ? `${journal.winRate.toFixed(1)}%` : "—"}</strong><small>{journal.maturedCount} settled</small></div>
         <div><span>NET PAPER P/L</span><strong className={netClass}>{journal.maturedCount ? formatUsd(journal.netPnlUsd) : "—"}</strong><small>cost included</small></div>
         <div><span>PROFIT FACTOR</span><strong>{journal.profitFactor === null ? "—" : journal.profitFactor.toFixed(2)}</strong><small>target ≥ 1.20</small></div>
         <div><span>MAX DRAWDOWN</span><strong>{journal.maturedCount ? `${journal.maxDrawdownPercent.toFixed(2)}%` : "—"}</strong><small>{journal.maturedCount ? formatUsd(journal.maxDrawdownUsd) : "no outcomes"}</small></div>
-        <div><span>LOSS STREAK</span><strong>{journal.maturedCount ? journal.longestLossStreak : "—"}</strong><small>consecutive</small></div>
+        <div><span>CURRENT STREAK</span><strong>{journal.maturedCount ? journal.currentLossStreak : "—"}</strong><small>max {journal.longestLossStreak} losses</small></div>
         <div><span>COST GATE</span><strong>{journal.signalCount ? `${journal.costGatePassRate.toFixed(1)}%` : "—"}</strong><small>{journal.costGatePassedCount}/{journal.signalCount} signals</small></div>
       </div>
 
@@ -687,10 +835,15 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
         />
       </div>
 
+      <PerformanceLens journal={journal} />
+
       <div className="journal-lower">
         <div className="qualification-card">
           <span>MODEL PROMOTION GATE</span>
           <ul>
+            <QualificationItem passed={readiness.observationPassed}>7日・168時間以上を観測</QualificationItem>
+            <QualificationItem passed={readiness.scanCoveragePassed}>24時間スキャン網羅率80%以上</QualificationItem>
+            <QualificationItem passed={readiness.latestScanFresh}>最新スキャンが12分以内</QualificationItem>
             <QualificationItem passed={journal.qualification.samplePassed}>30件以上を採点</QualificationItem>
             <QualificationItem passed={journal.qualification.netProfitPassed}>コスト後損益がプラス</QualificationItem>
             <QualificationItem passed={journal.qualification.profitFactorPassed}>PF 1.20以上</QualificationItem>
@@ -775,6 +928,7 @@ function PortfolioRiskBoard({ risk }: { risk: PortfolioRiskAssessment }) {
             {risk.maxEthCorrelation === null ? "—" : risk.maxEthCorrelation.toFixed(2)}
           </strong>
           <small>{risk.maxEthCorrelationSymbol ?? "DATA WAIT"} · LIMIT {risk.limits.correlation.toFixed(2)}</small>
+          <small>{risk.maxEthCorrelationSampleCount ?? 0} ALIGNED RETURNS</small>
         </div>
         <div>
           <span>24H PAPER P/L</span>
@@ -784,16 +938,19 @@ function PortfolioRiskBoard({ risk }: { risk: PortfolioRiskAssessment }) {
           <small>LOSS {risk.dailyLossPercent.toFixed(2)}% · LIMIT {risk.limits.dailyLossPercent}%</small>
         </div>
         <div>
-          <span>MAX LOSS STREAK</span>
-          <strong className={risk.longestLossStreak >= risk.limits.lossStreak ? "negative" : ""}>
-            {risk.longestLossStreak}
+          <span>CURRENT LOSS STREAK</span>
+          <strong className={risk.currentLossStreak >= risk.limits.lossStreak ? "negative" : ""}>
+            {risk.currentLossStreak}
           </strong>
-          <small>LIMIT {risk.limits.lossStreak} CONSECUTIVE</small>
+          <small>MAX {risk.longestLossStreak} · LIMIT {risk.limits.lossStreak}</small>
         </div>
       </div>
 
       <div className="portfolio-risk-reasons">
-        <span>{risk.blockNewBuys ? "BUY GATE CLOSED" : "BUY GATE OPEN"}</span>
+        <span>
+          {risk.blockNewBuys ? "BUY GATE CLOSED" : "BUY GATE OPEN"}<br />
+          TIME JOIN · MIN {risk.minimumCorrelationSampleCount ?? 0} RETURNS
+        </span>
         <ul>
           {risk.reasons.map((reason) => <li key={reason}>{reason}</li>)}
         </ul>
@@ -808,12 +965,14 @@ export function Dashboard({
   plan,
   journal,
   trendScout,
+  safetyControl,
 }: {
   snapshot: PortfolioSnapshot;
   chartModel: ChartModelSnapshot;
   plan: StrategyPlan;
   journal: PaperJournalSnapshot;
   trendScout: TrendScoutSnapshot;
+  safetyControl: SafetyControlSnapshot;
 }) {
   const signals = new Map(plan.signals.map((signal) => [signal.symbol, signal]));
   const actionableSignals = plan.signals.filter((signal) =>
@@ -893,6 +1052,8 @@ export function Dashboard({
           ))}
         </section>
       ) : null}
+
+      <OperationalSafetyStrip safety={safetyControl} />
 
       <ChartModelBoard chartModel={chartModel} />
 
@@ -976,6 +1137,8 @@ export function Dashboard({
               <li><i className="checked" />BUY／SELL双方向見積</li>
               <li><i className="checked" />価格影響上限超を停止</li>
               <li><i className="checked" />集中・相関・24時間損失ゲート</li>
+              <li><i className="checked" />15分超の価格履歴を停止</li>
+              <li><i className="checked" />永続緊急停止・決定ID重複防止</li>
               <li><i className="checked" />0.005 ETHを固定</li>
               <li><i className="checked" />オンチェーン署名なし</li>
               <li><i className="pending" />実売買接続は未実装</li>
@@ -985,7 +1148,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.3</span>
+          <span>SUMI TRADE LAB / BUILD 1.7</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

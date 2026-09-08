@@ -30,6 +30,21 @@ describe("multi-timeframe chart model", () => {
     expect(analysis.direction).toBe("BUY");
     expect(analysis.regime?.regime).toBe("uptrend");
     expect(analysis.score).toBeGreaterThanOrEqual(68);
+    expect(analysis.correlationSeries.at(-1)).toEqual({
+      timestamp: candles.at(-1)?.timestamp,
+      price: candles.at(-1)?.close,
+    });
+  });
+
+  it("fails closed when the latest completed candle is stale", () => {
+    const candles = marketSeries(0.035);
+    const now = candles.at(-1)!.timestamp + 300 + 16 * 60;
+    const analysis = analyzeChart("TEST", candles, 10_000, now);
+
+    expect(analysis.status).toBe("unavailable");
+    expect(analysis.direction).toBe("HOLD");
+    expect(analysis.reasons.join(" ")).toContain("上限15分");
+    expect(analysis.backtest.candleCount).toBe(720);
   });
 
   it("marks aligned falling timeframes as a sell setup", () => {

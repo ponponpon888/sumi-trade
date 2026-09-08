@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { compareStrategies } from "@/lib/chart-model";
 import { emptyPaperJournal } from "@/lib/paper-journal-core";
-import { assessPortfolioRisk, priceCorrelation } from "@/lib/portfolio-risk";
+import {
+  assessPortfolioRisk,
+  priceCorrelation,
+  timedPriceCorrelation,
+} from "@/lib/portfolio-risk";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
@@ -79,6 +83,10 @@ function analysis(symbol: string, sparkline: number[]): ChartAnalysis {
     reasons: [],
     lastPrice: sparkline.at(-1) ?? null,
     sparkline,
+    correlationSeries: sparkline.map((price, index) => ({
+      timestamp: index * 300,
+      price,
+    })),
     timeframes: [],
     regime: null,
     risk: null,
@@ -138,7 +146,14 @@ function chartModel(
     cadenceMinutes: 5,
     requestedAssetCount: analyses.length,
     readyAssetCount: analyses.length,
-    ethBenchmark: { status: "ready", sparkline: ethSeries },
+    ethBenchmark: {
+      status: "ready",
+      sparkline: ethSeries,
+      correlationSeries: ethSeries.map((price, index) => ({
+        timestamp: index * 300,
+        price,
+      })),
+    },
     analyses,
     warnings: [],
   };
@@ -157,6 +172,27 @@ describe("portfolio risk", () => {
   it("measures return correlation instead of price level", () => {
     expect(priceCorrelation(rising, rising)).toBeCloseTo(1, 3);
     expect(priceCorrelation(rising.slice(0, 8), rising.slice(0, 8))).toBeNull();
+  });
+
+  it("inner-joins correlation prices by timestamp instead of array position", () => {
+    const left = rising.map((price, index) => ({ timestamp: index * 300, price }));
+    const shifted = rising.map((price, index) => ({
+      timestamp: (index + 20) * 300,
+      price,
+    }));
+    const partial = rising.map((price, index) => ({
+      timestamp: (index + 6) * 300,
+      price,
+    }));
+
+    expect(timedPriceCorrelation(left, shifted)).toEqual({
+      correlation: null,
+      sampleCount: 0,
+    });
+    expect(timedPriceCorrelation(left, partial)).toMatchObject({
+      correlation: expect.any(Number),
+      sampleCount: 13,
+    });
   });
 
   it("passes diversified exposure with complete evidence", () => {
@@ -190,6 +226,7 @@ describe("portfolio risk", () => {
       leftSymbol: "AAA",
       rightSymbol: "BBB",
       correlation: 1,
+      sampleCount: 19,
       combinedExposurePercent: 60,
     });
   });
@@ -208,11 +245,27 @@ describe("portfolio risk", () => {
     const result = assessPortfolioRisk(
       snapshot([["AAA", 20]], 100),
       chartModel({ AAA: rising }),
-      journal({ dailyNetPnlUsd: -3, dailyLossPercent: 3, longestLossStreak: 3 }),
+      journal({
+        dailyNetPnlUsd: -3,
+        dailyLossPercent: 3,
+        longestLossStreak: 4,
+        currentLossStreak: 3,
+      }),
     );
     expect(result.status).toBe("blocked");
     expect(result.reasons.join(" ")).toContain("24時間損失3.00%");
     expect(result.reasons.join(" ")).toContain("3連敗");
+  });
+
+  it("does not block for an old loss streak after the latest trade wins", () => {
+    const result = assessPortfolioRisk(
+      snapshot([["AAA", 20]], 100),
+      chartModel({ AAA: rising }),
+      journal({ longestLossStreak: 4, currentLossStreak: 0 }),
+    );
+    expect(result.status).toBe("pass");
+    expect(result.currentLossStreak).toBe(0);
+    expect(result.longestLossStreak).toBe(4);
   });
 
   it("fails closed when correlation or journal evidence is unavailable", () => {

@@ -1,7 +1,12 @@
 import type {
   ChartModelSnapshot,
   PaperJournalSnapshot,
+  PaperAssetPerformance,
   PaperModelPerformance,
+  PaperOperationalReadiness,
+  PaperQualification,
+  PaperPerformanceTimelinePoint,
+  PaperPeriodPerformance,
   PaperScanRecord,
   PaperSignalModel,
   PaperSignalObservation,
@@ -12,8 +17,12 @@ import type {
 } from "@/lib/types";
 
 export const JOURNAL_WINDOW_DAYS = 7 as const;
+export const JOURNAL_ANALYTICS_WINDOW_DAYS = 30 as const;
+export const JOURNAL_RECORD_WINDOW_DAYS = 31 as const;
 export const OUTCOME_HORIZON_HOURS = 6 as const;
 export const MINIMUM_QUALIFICATION_SAMPLES = 30;
+export const MINIMUM_OBSERVATION_HOURS = 168 as const;
+export const MINIMUM_SCAN_COVERAGE_PERCENT = 80 as const;
 
 const SCAN_BUCKET_MS = 5 * 60 * 1_000;
 const SIGNAL_COOLDOWN_MS = OUTCOME_HORIZON_HOURS * 60 * 60 * 1_000;
@@ -22,6 +31,9 @@ const MAX_OUTCOME_DELAY_MS = 90 * 60 * 1_000;
 const MIN_PROFIT_FACTOR = 1.2;
 const MAX_DRAWDOWN_PERCENT = 8;
 const MIN_COST_GATE_COVERAGE_PERCENT = 70;
+const SCAN_FRESHNESS_MINUTES = 12;
+const ONE_HOUR_MS = 60 * 60 * 1_000;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -30,6 +42,83 @@ function round(value: number, digits = 2): number {
 
 function finitePositive(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+export function calculateOperationalReadiness(
+  records: PaperScanRecord[],
+  nowMs: number,
+  modelQualification: PaperQualification,
+): PaperOperationalReadiness {
+  const ordered = records.toSorted(
+    (left, right) => left.bucketTimeMs - right.bucketTimeMs,
+  );
+  const firstScanMs = ordered[0]?.bucketTimeMs ?? null;
+  const lastScanMs = ordered.at(-1)?.bucketTimeMs ?? null;
+  const observationHours = firstScanMs === null
+    ? 0
+    : round(Math.max(0, nowMs - firstScanMs) / ONE_HOUR_MS, 1);
+  const observationPassed = observationHours >= MINIMUM_OBSERVATION_HOURS;
+  const recentBucketCount = new Set(
+    ordered
+      .filter((record) => record.bucketTimeMs >= nowMs - ONE_DAY_MS)
+      .map((record) => record.bucketTimeMs),
+  ).size;
+  const expectedDailyScans = ONE_DAY_MS / SCAN_BUCKET_MS;
+  const scanCoverage24hPercent = round(
+    Math.min(100, (recentBucketCount / expectedDailyScans) * 100),
+    1,
+  );
+  const scanCoveragePassed =
+    scanCoverage24hPercent >= MINIMUM_SCAN_COVERAGE_PERCENT;
+  const latestScanFresh =
+    lastScanMs !== null &&
+    nowMs >= lastScanMs &&
+    nowMs - lastScanMs <= SCAN_FRESHNESS_MINUTES * 60_000;
+  const reasons: string[] = [];
+
+  if (!observationPassed) {
+    reasons.push(`観測期間が${MINIMUM_OBSERVATION_HOURS}時間に達していません。`);
+  }
+  if (!modelQualification.samplePassed) {
+    reasons.push(`採点済み件数が${modelQualification.minimumSamples}件に達していません。`);
+  }
+  if (!scanCoveragePassed) {
+    reasons.push(`直近24時間のスキャン網羅率が${MINIMUM_SCAN_COVERAGE_PERCENT}%未満です。`);
+  }
+  if (!latestScanFresh) {
+    reasons.push("最新スキャンが12分以内に確認できません。");
+  }
+  if (
+    observationPassed &&
+    modelQualification.samplePassed &&
+    !modelQualification.overallPassed
+  ) {
+    reasons.push("モデル成績が昇格条件を満たしていません。");
+  }
+
+  const overallPassed =
+    observationPassed &&
+    scanCoveragePassed &&
+    latestScanFresh &&
+    modelQualification.overallPassed;
+  const status = overallPassed
+    ? "ready"
+    : !observationPassed || !modelQualification.samplePassed
+      ? "collecting"
+      : "blocked";
+
+  return {
+    status,
+    minimumObservationHours: MINIMUM_OBSERVATION_HOURS,
+    observationHours,
+    observationPassed,
+    minimumScanCoveragePercent: MINIMUM_SCAN_COVERAGE_PERCENT,
+    scanCoverage24hPercent,
+    scanCoveragePassed,
+    latestScanFresh,
+    overallPassed,
+    reasons,
+  };
 }
 
 function bucketId(bucketTimeMs: number): string {
@@ -47,6 +136,7 @@ export function createPaperScanRecord(
   trackedPrices: Record<string, number> = {},
 ): PaperScanRecord {
   const bucketTimeMs = Math.floor(nowMs / SCAN_BUCKET_MS) * SCAN_BUCKET_MS;
+  const recordId = bucketId(bucketTimeMs);
   const prices: Record<string, number> = {};
   const planBySymbol = new Map(
     data.plan.signals.map((signal) => [signal.symbol, signal]),
@@ -76,6 +166,7 @@ export function createPaperScanRecord(
         : 0;
 
     signals.push({
+      decisionId: `${recordId}:chart:${analysis.symbol}:${analysis.direction}`,
       model: "chart",
       priceKey: analysis.symbol,
       symbol: analysis.symbol,
@@ -104,6 +195,7 @@ export function createPaperScanRecord(
     const priceKey = rotation.toContractAddress.toLowerCase();
     prices[priceKey] = rotation.entryPriceUsd;
     signals.push({
+      decisionId: `${recordId}:community-trend:${priceKey}:BUY`,
       model: "community-trend",
       priceKey,
       contractAddress: priceKey,
@@ -120,7 +212,7 @@ export function createPaperScanRecord(
 
   return {
     schemaVersion: 1,
-    id: bucketId(bucketTimeMs),
+    id: recordId,
     bucketTimeMs,
     generatedAt: new Date(nowMs).toISOString(),
     walletAddress: data.snapshot.walletAddress.toLowerCase(),
@@ -139,13 +231,16 @@ function selectIndependentSignals(
     signal: PaperSignalObservation;
   }> = [];
   const lastSignalAt = new Map<string, number>();
+  const seenDecisionIds = new Set<string>();
 
   for (const record of records) {
     for (const signal of record.signals) {
+      if (signal.decisionId && seenDecisionIds.has(signal.decisionId)) continue;
       const key = `${signal.model ?? "chart"}:${signal.priceKey ?? signal.symbol}:${signal.direction}`;
       const previous = lastSignalAt.get(key) ?? Number.NEGATIVE_INFINITY;
       if (record.bucketTimeMs - previous < SIGNAL_COOLDOWN_MS) continue;
       selected.push({ record, signal });
+      if (signal.decisionId) seenDecisionIds.add(signal.decisionId);
       lastSignalAt.set(key, record.bucketTimeMs);
     }
   }
@@ -220,6 +315,7 @@ function emptyModelPerformance(model: PaperSignalModel): PaperModelPerformance {
     maxDrawdownUsd: 0,
     maxDrawdownPercent: 0,
     longestLossStreak: 0,
+    currentLossStreak: 0,
     qualification: {
       minimumSamples: MINIMUM_QUALIFICATION_SAMPLES,
       samplePassed: false,
@@ -319,6 +415,7 @@ function calculateModelPerformance(
     maxDrawdownUsd: round(maxDrawdownUsd),
     maxDrawdownPercent: round(maxDrawdownPercent),
     longestLossStreak,
+    currentLossStreak,
     qualification: {
       minimumSamples: MINIMUM_QUALIFICATION_SAMPLES,
       samplePassed,
@@ -336,6 +433,162 @@ function calculateModelPerformance(
   };
 }
 
+type OutcomeMetrics = Omit<
+  PaperPeriodPerformance,
+  "days"
+> & {
+  averageWinPercent: number;
+  averageLossPercent: number;
+  payoffRatio: number | null;
+};
+
+function calculateOutcomeMetrics(
+  outcomes: PaperTradeOutcome[],
+  startingCapital: number,
+): OutcomeMetrics {
+  const wins = outcomes.filter((outcome) => outcome.netPnlUsd > 0);
+  const losses = outcomes.filter((outcome) => outcome.netPnlUsd <= 0);
+  const grossProfit = wins.reduce((total, outcome) => total + outcome.netPnlUsd, 0);
+  const grossLoss = Math.abs(
+    losses.reduce((total, outcome) => total + outcome.netPnlUsd, 0),
+  );
+  const averageWinPercent = wins.length
+    ? wins.reduce((total, outcome) => total + outcome.netReturnPercent, 0) /
+      wins.length
+    : 0;
+  const averageLossPercent = losses.length
+    ? losses.reduce((total, outcome) => total + outcome.netReturnPercent, 0) /
+      losses.length
+    : 0;
+  let equity = startingCapital;
+  let peak = startingCapital;
+  let maxDrawdownUsd = 0;
+
+  for (const outcome of outcomes) {
+    equity += outcome.netPnlUsd;
+    peak = Math.max(peak, equity);
+    maxDrawdownUsd = Math.max(maxDrawdownUsd, peak - equity);
+  }
+
+  return {
+    maturedCount: outcomes.length,
+    winRate: outcomes.length ? round((wins.length / outcomes.length) * 100, 1) : 0,
+    netPnlUsd: round(outcomes.reduce((total, outcome) => total + outcome.netPnlUsd, 0)),
+    averageNetReturnPercent: outcomes.length
+      ? round(
+          outcomes.reduce((total, outcome) => total + outcome.netReturnPercent, 0) /
+            outcomes.length,
+        )
+      : 0,
+    profitFactor:
+      grossLoss > 0
+        ? round(grossProfit / grossLoss)
+        : grossProfit > 0
+          ? null
+          : 0,
+    maxDrawdownPercent:
+      startingCapital > 0 ? round((maxDrawdownUsd / startingCapital) * 100) : 0,
+    averageWinPercent: round(averageWinPercent),
+    averageLossPercent: round(averageLossPercent),
+    payoffRatio:
+      wins.length && losses.length && averageLossPercent !== 0
+        ? round(averageWinPercent / Math.abs(averageLossPercent))
+        : null,
+  };
+}
+
+function outcomeTimeMs(outcome: PaperTradeOutcome): number {
+  const parsed = Date.parse(outcome.outcomeTime);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+function periodPerformance(
+  outcomes: PaperTradeOutcome[],
+  nowMs: number,
+  startingCapital: number,
+): PaperPeriodPerformance[] {
+  return ([1, 7, 30] as const).map((days) => {
+    const cutoff = nowMs - days * 24 * 60 * 60 * 1_000;
+    const metrics = calculateOutcomeMetrics(
+      outcomes.filter((outcome) => outcomeTimeMs(outcome) >= cutoff),
+      startingCapital,
+    );
+    return {
+      days,
+      maturedCount: metrics.maturedCount,
+      winRate: metrics.winRate,
+      netPnlUsd: metrics.netPnlUsd,
+      averageNetReturnPercent: metrics.averageNetReturnPercent,
+      profitFactor: metrics.profitFactor,
+      maxDrawdownPercent: metrics.maxDrawdownPercent,
+    };
+  });
+}
+
+function assetPerformance(
+  outcomes: PaperTradeOutcome[],
+  startingCapital: number,
+): PaperAssetPerformance[] {
+  const bySymbol = new Map<string, PaperTradeOutcome[]>();
+  for (const outcome of outcomes) {
+    const bucket = bySymbol.get(outcome.symbol) ?? [];
+    bucket.push(outcome);
+    bySymbol.set(outcome.symbol, bucket);
+  }
+
+  return [...bySymbol.entries()]
+    .map(([symbol, scopedOutcomes]) => {
+      const metrics = calculateOutcomeMetrics(scopedOutcomes, startingCapital);
+      return {
+        symbol,
+        maturedCount: metrics.maturedCount,
+        winRate: metrics.winRate,
+        netPnlUsd: metrics.netPnlUsd,
+        averageNetReturnPercent: metrics.averageNetReturnPercent,
+        profitFactor: metrics.profitFactor,
+      };
+    })
+    .toSorted(
+      (left, right) =>
+        right.netPnlUsd - left.netPnlUsd ||
+        right.maturedCount - left.maturedCount ||
+        left.symbol.localeCompare(right.symbol),
+    )
+    .slice(0, 6);
+}
+
+function performanceTimeline(
+  outcomes: PaperTradeOutcome[],
+  nowMs: number,
+): PaperPerformanceTimelinePoint[] {
+  const pnlByDate = new Map<string, { tradeCount: number; netPnlUsd: number }>();
+  for (const outcome of outcomes) {
+    const time = outcomeTimeMs(outcome);
+    if (!Number.isFinite(time)) continue;
+    const date = new Date(time).toISOString().slice(0, 10);
+    const current = pnlByDate.get(date) ?? { tradeCount: 0, netPnlUsd: 0 };
+    current.tradeCount += 1;
+    current.netPnlUsd += outcome.netPnlUsd;
+    pnlByDate.set(date, current);
+  }
+
+  let cumulativeNetPnlUsd = 0;
+  return Array.from({ length: JOURNAL_ANALYTICS_WINDOW_DAYS }, (_, index) => {
+    const daysAgo = JOURNAL_ANALYTICS_WINDOW_DAYS - 1 - index;
+    const date = new Date(nowMs - daysAgo * 24 * 60 * 60 * 1_000)
+      .toISOString()
+      .slice(0, 10);
+    const daily = pnlByDate.get(date) ?? { tradeCount: 0, netPnlUsd: 0 };
+    cumulativeNetPnlUsd += daily.netPnlUsd;
+    return {
+      date,
+      tradeCount: daily.tradeCount,
+      netPnlUsd: round(daily.netPnlUsd),
+      cumulativeNetPnlUsd: round(cumulativeNetPnlUsd),
+    };
+  });
+}
+
 export function emptyPaperJournal(
   status: "disabled" | "error",
   message: string,
@@ -345,6 +598,7 @@ export function emptyPaperJournal(
     storageConfigured: status !== "disabled",
     executionLocked: true,
     windowDays: JOURNAL_WINDOW_DAYS,
+    analyticsWindowDays: JOURNAL_ANALYTICS_WINDOW_DAYS,
     horizonHours: OUTCOME_HORIZON_HOURS,
     startedAt: null,
     lastScanAt: null,
@@ -363,6 +617,22 @@ export function emptyPaperJournal(
     maxDrawdownUsd: 0,
     maxDrawdownPercent: 0,
     longestLossStreak: 0,
+    currentLossStreak: 0,
+    operationalReadiness: {
+      status: "collecting",
+      minimumObservationHours: MINIMUM_OBSERVATION_HOURS,
+      observationHours: 0,
+      observationPassed: false,
+      minimumScanCoveragePercent: MINIMUM_SCAN_COVERAGE_PERCENT,
+      scanCoverage24hPercent: 0,
+      scanCoveragePassed: false,
+      latestScanFresh: false,
+      overallPassed: false,
+      reasons: [message],
+    },
+    averageWinPercent: 0,
+    averageLossPercent: 0,
+    payoffRatio: null,
     qualification: {
       minimumSamples: MINIMUM_QUALIFICATION_SAMPLES,
       samplePassed: false,
@@ -376,6 +646,17 @@ export function emptyPaperJournal(
       chart: emptyModelPerformance("chart"),
       "community-trend": emptyModelPerformance("community-trend"),
     },
+    periodPerformance: ([1, 7, 30] as const).map((days) => ({
+      days,
+      maturedCount: 0,
+      winRate: 0,
+      netPnlUsd: 0,
+      averageNetReturnPercent: 0,
+      profitFactor: null,
+      maxDrawdownPercent: 0,
+    })),
+    assetPerformance: [],
+    performanceTimeline: [],
     recentOutcomes: [],
     message,
   };
@@ -385,21 +666,43 @@ export function evaluatePaperJournal(
   inputRecords: PaperScanRecord[],
   nowMs = Date.now(),
 ): PaperJournalSnapshot {
-  const windowStart = nowMs - JOURNAL_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
-  const records = inputRecords
+  const analyticsWindowStart =
+    nowMs - JOURNAL_ANALYTICS_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+  const recordWindowStart =
+    nowMs - JOURNAL_RECORD_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+  const analyticsRecords = inputRecords
     .filter(
       (record) =>
         record.schemaVersion === 1 &&
         record.executionLocked === true &&
-        record.bucketTimeMs >= windowStart &&
+        record.bucketTimeMs >= recordWindowStart &&
         record.bucketTimeMs <= nowMs,
     )
     .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
+  const windowStart = nowMs - JOURNAL_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+  const records = analyticsRecords.filter(
+    (record) => record.bucketTimeMs >= windowStart,
+  );
   const candidates = selectIndependentSignals(records);
   const outcomes = candidates
     .map((candidate) => settleSignal(candidate, records))
     .filter((outcome): outcome is PaperTradeOutcome => outcome !== null);
+  const analyticsCandidates = selectIndependentSignals(analyticsRecords);
+  const analyticsOutcomes = analyticsCandidates
+    .map((candidate) => settleSignal(candidate, analyticsRecords))
+    .filter((outcome): outcome is PaperTradeOutcome => outcome !== null)
+    .filter(
+      (outcome) =>
+        signalModel(outcome) === "chart" &&
+        outcomeTimeMs(outcome) >= analyticsWindowStart,
+    );
   const startingCapital = records[0]?.portfolioValueUsd ?? 0;
+  const analyticsStartingCapital =
+    analyticsRecords[0]?.portfolioValueUsd ?? startingCapital;
+  const analyticsMetrics = calculateOutcomeMetrics(
+    analyticsOutcomes,
+    analyticsStartingCapital,
+  );
   const chart = calculateModelPerformance(
     "chart",
     candidates,
@@ -412,10 +715,15 @@ export function evaluatePaperJournal(
     outcomes,
     startingCapital,
   );
-  const status = !chart.qualification.samplePassed
-    ? "collecting"
-    : chart.qualification.overallPassed
-      ? "qualified"
+  const operationalReadiness = calculateOperationalReadiness(
+    analyticsRecords,
+    nowMs,
+    chart.qualification,
+  );
+  const status = operationalReadiness.status === "ready"
+    ? "qualified"
+    : operationalReadiness.status === "collecting"
+      ? "collecting"
       : "rejected";
   const dailyNetPnlUsd = outcomes
     .filter((outcome) => {
@@ -433,8 +741,9 @@ export function evaluatePaperJournal(
     storageConfigured: true,
     executionLocked: true,
     windowDays: JOURNAL_WINDOW_DAYS,
+    analyticsWindowDays: JOURNAL_ANALYTICS_WINDOW_DAYS,
     horizonHours: OUTCOME_HORIZON_HOURS,
-    startedAt: records[0]?.generatedAt ?? null,
+    startedAt: analyticsRecords[0]?.generatedAt ?? null,
     lastScanAt: records.at(-1)?.generatedAt ?? null,
     scanCount: records.length,
     signalCount: chart.signalCount,
@@ -451,11 +760,26 @@ export function evaluatePaperJournal(
     maxDrawdownUsd: chart.maxDrawdownUsd,
     maxDrawdownPercent: chart.maxDrawdownPercent,
     longestLossStreak: chart.longestLossStreak,
+    currentLossStreak: chart.currentLossStreak,
+    operationalReadiness,
+    averageWinPercent: analyticsMetrics.averageWinPercent,
+    averageLossPercent: analyticsMetrics.averageLossPercent,
+    payoffRatio: analyticsMetrics.payoffRatio,
     qualification: chart.qualification,
     modelPerformance: {
       chart,
       "community-trend": communityTrend,
     },
+    periodPerformance: periodPerformance(
+      analyticsOutcomes,
+      nowMs,
+      analyticsStartingCapital,
+    ),
+    assetPerformance: assetPerformance(
+      analyticsOutcomes,
+      analyticsStartingCapital,
+    ),
+    performanceTimeline: performanceTimeline(analyticsOutcomes, nowMs),
     recentOutcomes: outcomes
       .filter((outcome) => signalModel(outcome) === "chart")
       .toReversed()
@@ -463,10 +787,10 @@ export function evaluatePaperJournal(
     message:
       records.length === 0
         ? "最初の5分スキャンを待っています。"
-        : !chart.qualification.samplePassed
-          ? `6時間後採点を収集中です（${chart.maturedCount}/${MINIMUM_QUALIFICATION_SAMPLES}件）。`
-          : chart.qualification.overallPassed
-            ? "全ての昇格条件を通過しました。実売買は引き続きロック中です。"
-            : "サンプルは揃いましたが、昇格条件を満たしていません。モデル調整が必要です。",
+        : operationalReadiness.status === "collecting"
+          ? `7日間の連続観測と6時間後採点を収集中です（${chart.maturedCount}/${MINIMUM_QUALIFICATION_SAMPLES}件）。`
+          : operationalReadiness.status === "ready"
+            ? "運用品質と全ての昇格条件を通過しました。実売買は引き続きロック中です。"
+            : operationalReadiness.reasons[0] ?? "運用準備度が昇格条件を満たしていません。",
   };
 }
