@@ -1565,6 +1565,85 @@ a {
   display: block;
 }
 
+.regime-performance-board {
+  border: 1px solid var(--line);
+  border-top: 0;
+}
+
+.regime-performance-heading {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  padding: 17px 20px;
+}
+
+.regime-performance-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.regime-performance-heading span,
+.regime-performance-heading small,
+.regime-performance-grid span,
+.regime-performance-grid small {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.regime-performance-heading span {
+  color: var(--lime);
+  font-weight: 800;
+}
+
+.regime-performance-heading strong {
+  font-size: 16px;
+}
+
+.regime-performance-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.regime-performance-grid article {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 17px 20px;
+}
+
+.regime-performance-grid article + article {
+  border-left: 1px solid var(--line);
+}
+
+.regime-performance-grid article > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.regime-performance-grid article > div span {
+  color: #a8b1aa;
+  font-weight: 800;
+}
+
+.regime-performance-grid article > strong {
+  font-size: clamp(17px, 1.8vw, 24px);
+}
+
+.regime-performance-board > p {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
+  margin: 0;
+  padding: 12px 20px;
+}
+
 .performance-lens {
   border: 1px solid var(--line);
   border-top: 0;
@@ -2790,6 +2869,11 @@ a {
   .calibration-grid { grid-template-columns: 1fr; }
   .calibration-card + .calibration-card { border-left: 0; border-top: 1px solid var(--line); }
   .calibration-board-heading { align-items: start; flex-direction: column; gap: 8px; }
+  .regime-performance-heading { align-items: start; flex-direction: column; gap: 8px; }
+  .regime-performance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .regime-performance-grid article:nth-child(3),
+  .regime-performance-grid article:nth-child(5) { border-left: 0; }
+  .regime-performance-grid article:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .performance-detail-grid { grid-template-columns: 1fr; }
   .asset-performance-card { border-left: 0; border-top: 1px solid var(--line); }
   .payoff-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }

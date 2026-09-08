@@ -265,6 +265,7 @@ describe("paper journal", () => {
     expect(first.signals[0]).toMatchObject({
       decisionId: `${first.id}:chart:TEST:BUY`,
       direction: "BUY",
+      marketRegime: "uptrend",
       notionalUsd: 200,
     });
   });

@@ -442,6 +442,7 @@ export interface PaperSignalObservation {
   entryPriceUsd: number;
   modelScore: number;
   confidence: number;
+  marketRegime?: MarketRegime;
   notionalUsd: number;
   estimatedCostUsd: number;
   costGatePassed: boolean;
@@ -570,6 +571,18 @@ export interface PaperConfidenceCalibration {
   researchOnly: true;
 }
 
+export interface PaperRegimePerformance {
+  regime: MarketRegime;
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+  profitFactor: number | null;
+  minimumSamples: 10;
+  status: "collecting" | "ready";
+  researchOnly: true;
+}
+
 export interface PaperAssetPerformance {
   symbol: string;
   maturedCount: number;
@@ -621,6 +634,7 @@ export interface PaperJournalSnapshot {
   periodPerformanceByModel: Record<PaperSignalModel, PaperPeriodPerformance[]>;
   driftPerformanceByModel: Record<PaperSignalModel, PaperDriftPerformance>;
   confidenceCalibrationByModel: Record<PaperSignalModel, PaperConfidenceCalibration>;
+  regimePerformance: PaperRegimePerformance[];
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   recentOutcomes: PaperTradeOutcome[];
