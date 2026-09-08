@@ -11,6 +11,7 @@ const MINIMUM_BASELINE_SAMPLES = 20 as const;
 const AVERAGE_RETURN_DROP_PERCENTAGE_POINTS = 1.5 as const;
 const RECENT_PROFIT_FACTOR_LIMIT = 0.8 as const;
 const BASELINE_PROFIT_FACTOR_FLOOR = 1.2 as const;
+const RECOVERY_CONFIRMATION_HOURS = 12 as const;
 
 const limits: ModelDriftAssessment["limits"] = {
   minimumRecentSamples: MINIMUM_RECENT_SAMPLES,
@@ -32,6 +33,7 @@ function result(
   recent: PaperDriftWindowPerformance | undefined,
   baseline: PaperDriftWindowPerformance | undefined,
   reasons: string[],
+  recoveryConfirmationPassed = false,
 ): ModelDriftAssessment {
   const recentAverage = recent?.averageNetReturnPercent ?? 0;
   const baselineAverage = baseline?.averageNetReturnPercent ?? 0;
@@ -49,9 +51,37 @@ function result(
     averageReturnDropPercentagePoints: round(baselineAverage - recentAverage),
     recentProfitFactor: recent?.profitFactor ?? null,
     baselineProfitFactor: baseline?.profitFactor ?? null,
+    recoveryConfirmationHours: RECOVERY_CONFIRMATION_HOURS,
+    recoveryConfirmationPassed,
     limits,
     reasons,
   };
+}
+
+function hasEnoughSamples(
+  recent: PaperDriftWindowPerformance,
+  baseline: PaperDriftWindowPerformance,
+): boolean {
+  return (
+    recent.maturedCount >= MINIMUM_RECENT_SAMPLES &&
+    baseline.maturedCount >= MINIMUM_BASELINE_SAMPLES
+  );
+}
+
+function isBreakdown(
+  recent: PaperDriftWindowPerformance,
+  baseline: PaperDriftWindowPerformance,
+): boolean {
+  const returnDrop = baseline.averageNetReturnPercent - recent.averageNetReturnPercent;
+  const recentProfitFactor = recent.profitFactor ?? (recent.netPnlUsd < 0 ? 0 : null);
+  return (
+    (recent.netPnlUsd < 0 && returnDrop >= AVERAGE_RETURN_DROP_PERCENTAGE_POINTS) ||
+    (recent.netPnlUsd < 0 &&
+      baseline.profitFactor !== null &&
+      baseline.profitFactor >= BASELINE_PROFIT_FACTOR_FLOOR &&
+      recentProfitFactor !== null &&
+      recentProfitFactor < RECENT_PROFIT_FACTOR_LIMIT)
+  );
 }
 
 export function assessModelDrift(
@@ -123,6 +153,22 @@ export function assessModelDrift(
     return result("degraded", true, model, recent, baseline, reasons);
   }
 
+  const confirmation = performance.confirmation;
+  if (
+    confirmation &&
+    hasEnoughSamples(confirmation.recent, confirmation.baseline) &&
+    isBreakdown(confirmation.recent, confirmation.baseline)
+  ) {
+    return result(
+      "recovering",
+      true,
+      model,
+      recent,
+      baseline,
+      ["現在値は回復域ですが、12時間前の確認窓が劣化状態のため新規BUY停止を継続します。"],
+    );
+  }
+
   return result(
     "stable",
     false,
@@ -130,6 +176,7 @@ export function assessModelDrift(
     recent,
     baseline,
     ["直近7日成績に、直前23日からの重大な劣化は検出されませんでした。"],
+    confirmation ? hasEnoughSamples(confirmation.recent, confirmation.baseline) : false,
   );
 }
 

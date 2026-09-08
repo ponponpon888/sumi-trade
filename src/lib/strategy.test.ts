@@ -26,6 +26,8 @@ const DEGRADED_MODEL: ModelDriftSnapshot = {
     averageReturnDropPercentagePoints: 1.8,
     recentProfitFactor: 0.6,
     baselineProfitFactor: 1.4,
+    recoveryConfirmationHours: 12,
+    recoveryConfirmationPassed: false,
     limits: {
       minimumRecentSamples: 10,
       minimumBaselineSamples: 20,
@@ -49,6 +51,8 @@ const DEGRADED_MODEL: ModelDriftSnapshot = {
     averageReturnDropPercentagePoints: 0.2,
     recentProfitFactor: 1.3,
     baselineProfitFactor: 1.5,
+    recoveryConfirmationHours: 12,
+    recoveryConfirmationPassed: true,
     limits: {
       minimumRecentSamples: 10,
       minimumBaselineSamples: 20,

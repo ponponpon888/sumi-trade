@@ -47,6 +47,8 @@ function drift(blockNewBuys: boolean): ModelDriftAssessment {
     averageReturnDropPercentagePoints: blockNewBuys ? 1.7 : 0.2,
     recentProfitFactor: blockNewBuys ? 0.6 : 1.3,
     baselineProfitFactor: 1.4,
+    recoveryConfirmationHours: 12,
+    recoveryConfirmationPassed: !blockNewBuys,
     limits: {
       minimumRecentSamples: 10,
       minimumBaselineSamples: 20,

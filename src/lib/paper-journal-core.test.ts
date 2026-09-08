@@ -187,6 +187,8 @@ function data(price: number, direction: "BUY" | "SELL") {
         averageReturnDropPercentagePoints: 0,
         recentProfitFactor: null,
         baselineProfitFactor: null,
+        recoveryConfirmationHours: 12,
+        recoveryConfirmationPassed: false,
         limits: {
           minimumRecentSamples: 10,
           minimumBaselineSamples: 20,
@@ -210,6 +212,8 @@ function data(price: number, direction: "BUY" | "SELL") {
         averageReturnDropPercentagePoints: 0,
         recentProfitFactor: null,
         baselineProfitFactor: null,
+        recoveryConfirmationHours: 12,
+        recoveryConfirmationPassed: false,
         limits: {
           minimumRecentSamples: 10,
           minimumBaselineSamples: 20,
@@ -542,6 +546,11 @@ describe("paper journal", () => {
     expect(result.driftPerformanceByModel.chart).toMatchObject({
       recent: { maturedCount: 2, netPnlUsd: -14 },
       baseline: { maturedCount: 1, netPnlUsd: 18 },
+      confirmation: {
+        offsetHours: 12,
+        recent: { maturedCount: 1 },
+        baseline: { maturedCount: 1 },
+      },
     });
     expect(
       result.driftPerformanceByModel.chart.recent.maturedCount +
