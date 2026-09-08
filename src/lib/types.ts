@@ -246,6 +246,23 @@ export interface DataSourceQualitySnapshot {
   readOnly: true;
 }
 
+export interface PaperDataSourceObservation {
+  source: DataSourceId;
+  status: DataSourceQualityItem["status"];
+  coveragePercent: number;
+  dataAgeSeconds: number | null;
+}
+
+export interface DataSourceQualityHistoryItem {
+  source: DataSourceId;
+  status: "collecting" | "healthy" | "degraded";
+  observationCount: number;
+  minimumObservations: 12;
+  availabilityPercent: number;
+  averageCoveragePercent: number;
+  currentFailureStreak: number;
+}
+
 export interface MarketData {
   dexId: string;
   pairAddress: string;
@@ -492,6 +509,7 @@ export interface PaperScanRecord {
   executionLocked: true;
   prices: Record<string, number>;
   signals: PaperSignalObservation[];
+  dataSourceQuality?: PaperDataSourceObservation[];
 }
 
 export interface PaperTradeOutcome extends PaperSignalObservation {
@@ -668,6 +686,7 @@ export interface PaperJournalSnapshot {
   regimePerformance: PaperRegimePerformance[];
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
+  dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];
   recentOutcomes: PaperTradeOutcome[];
   message: string;
 }

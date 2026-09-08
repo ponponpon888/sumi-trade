@@ -5,6 +5,7 @@ import { formatAmount, formatUsd } from "@/lib/number";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  DataSourceQualityHistoryItem,
   DataSourceQualitySnapshot,
   ModelDriftAssessment,
   ModelDriftSnapshot,
@@ -90,11 +91,20 @@ const dataSourceStatusLabels = {
   unavailable: "NO SAMPLE",
 } as const;
 
+const dataSourceHistoryStatusLabels = {
+  collecting: "COLLECTING",
+  healthy: "STABLE",
+  degraded: "DEGRADED",
+} as const;
+
 function DataSourceQualityBoard({
   quality,
+  history,
 }: {
   quality: DataSourceQualitySnapshot;
+  history: DataSourceQualityHistoryItem[];
 }) {
+  const historyBySource = new Map(history.map((item) => [item.source, item]));
   return (
     <section
       className={`data-source-board data-source-${quality.status} shell`}
@@ -111,18 +121,28 @@ function DataSourceQualityBoard({
         </span>
       </div>
       <div className="data-source-grid">
-        {quality.sources.map((source) => (
-          <article className={`data-source-card data-source-card-${source.status}`} key={source.source}>
-            <div>
-              <span>{dataSourceLabels[source.source]}</span>
-              <b>{dataSourceStatusLabels[source.status]}</b>
-            </div>
-            <strong>{source.coveragePercent.toFixed(1)}%</strong>
-            <small>{source.successfulCount}/{source.observedCount} COMPLETE · MISSING {(100 - source.coveragePercent).toFixed(1)}%</small>
-            <small>{source.dataAgeSeconds === null ? "SOURCE AGE N/A" : `MAX AGE ${source.dataAgeSeconds.toFixed(0)}S`}</small>
-            <p>{source.reasons[0]}</p>
-          </article>
-        ))}
+        {quality.sources.map((source) => {
+          const historical = historyBySource.get(source.source);
+          return (
+            <article className={`data-source-card data-source-card-${source.status}`} key={source.source}>
+              <div>
+                <span>{dataSourceLabels[source.source]}</span>
+                <b>{dataSourceStatusLabels[source.status]}</b>
+              </div>
+              <strong>{source.coveragePercent.toFixed(1)}%</strong>
+              <small>{source.successfulCount}/{source.observedCount} COMPLETE · MISSING {(100 - source.coveragePercent).toFixed(1)}%</small>
+              <small>{source.dataAgeSeconds === null ? "SOURCE AGE N/A" : `MAX AGE ${source.dataAgeSeconds.toFixed(0)}S`}</small>
+              <p>{source.reasons[0]}</p>
+              {historical ? (
+                <div className={`data-source-history data-source-history-${historical.status}`}>
+                  <span>HISTORY 24H · {dataSourceHistoryStatusLabels[historical.status]}</span>
+                  <small>AVAILABLE {historical.availabilityPercent.toFixed(1)}% · AVG COVERAGE {historical.averageCoveragePercent.toFixed(1)}%</small>
+                  <small>OBS {historical.observationCount}/{historical.minimumObservations} MIN · FAIL STREAK {historical.currentFailureStreak}</small>
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -1356,7 +1376,10 @@ export function Dashboard({
 
       <OperationalSafetyStrip safety={safetyControl} />
 
-      <DataSourceQualityBoard quality={dataSourceQuality} />
+      <DataSourceQualityBoard
+        quality={dataSourceQuality}
+        history={journal.dataSourceQualityHistory24h}
+      />
 
       <ChartModelBoard chartModel={chartModel} />
 
@@ -1454,7 +1477,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.19</span>
+          <span>SUMI TRADE LAB / BUILD 1.20</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

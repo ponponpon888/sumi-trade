@@ -1,10 +1,22 @@
 import type {
   ChartModelSnapshot,
   DataSourceId,
+  DataSourceQualityHistoryItem,
   DataSourceQualityItem,
   DataSourceQualitySnapshot,
+  PaperScanRecord,
   PortfolioSnapshot,
 } from "@/lib/types";
+
+export const DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS = 12 as const;
+const DATA_SOURCE_HISTORY_WINDOW_MS = 24 * 60 * 60 * 1_000;
+const DATA_SOURCE_IDS: DataSourceId[] = [
+  "blockscout",
+  "dexscreener",
+  "geckoterminal",
+  "ethereum-rpc",
+  "kyberswap",
+];
 
 function round(value: number, digits = 1): number {
   const factor = 10 ** digits;
@@ -117,4 +129,60 @@ export function assessDataSourceQuality(
     sources,
     readOnly: true,
   };
+}
+
+export function calculateDataSourceQualityHistory(
+  records: PaperScanRecord[],
+  nowMs = Date.now(),
+): DataSourceQualityHistoryItem[] {
+  const windowStart = nowMs - DATA_SOURCE_HISTORY_WINDOW_MS;
+  const observations = records
+    .filter(
+      (record) =>
+        record.bucketTimeMs >= windowStart && record.bucketTimeMs <= nowMs,
+    )
+    .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
+
+  return DATA_SOURCE_IDS.map((source) => {
+    const sourceObservations = observations.flatMap((record) =>
+      record.dataSourceQuality?.filter((item) => item.source === source) ?? [],
+    );
+    const observationCount = sourceObservations.length;
+    const availableCount = sourceObservations.filter(
+      (item) => item.status !== "unavailable",
+    ).length;
+    const availabilityPercent = observationCount
+      ? round((availableCount / observationCount) * 100)
+      : 0;
+    const averageCoveragePercent = observationCount
+      ? round(
+        sourceObservations.reduce(
+          (total, item) => total + item.coveragePercent,
+          0,
+        ) / observationCount,
+      )
+      : 0;
+    let currentFailureStreak = 0;
+    for (const observation of sourceObservations.toReversed()) {
+      if (observation.status !== "unavailable") break;
+      currentFailureStreak += 1;
+    }
+    const status = observationCount < DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS
+      ? "collecting"
+      : availabilityPercent >= 95 &&
+          averageCoveragePercent >= 90 &&
+          currentFailureStreak < 3
+        ? "healthy"
+        : "degraded";
+
+    return {
+      source,
+      status,
+      observationCount,
+      minimumObservations: DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS,
+      availabilityPercent,
+      averageCoveragePercent,
+      currentFailureStreak,
+    };
+  });
 }

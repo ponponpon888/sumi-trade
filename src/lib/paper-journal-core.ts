@@ -19,6 +19,10 @@ import type {
   StrategyPlan,
   TrendScoutSnapshot,
 } from "@/lib/types";
+import {
+  assessDataSourceQuality,
+  calculateDataSourceQualityHistory,
+} from "@/lib/data-source-quality";
 
 export const JOURNAL_WINDOW_DAYS = 7 as const;
 export const JOURNAL_ANALYTICS_WINDOW_DAYS = 30 as const;
@@ -159,6 +163,16 @@ export function createPaperScanRecord(
     data.plan.signals.map((signal) => [signal.symbol, signal]),
   );
   const signals: PaperSignalObservation[] = [];
+  const dataSourceQuality = assessDataSourceQuality(
+    data.snapshot,
+    data.chartModel,
+    nowMs,
+  ).sources.map(({ source, status, coveragePercent, dataAgeSeconds }) => ({
+    source,
+    status,
+    coveragePercent,
+    dataAgeSeconds,
+  }));
 
   for (const analysis of data.chartModel.analyses) {
     if (finitePositive(analysis.lastPrice)) {
@@ -248,6 +262,7 @@ export function createPaperScanRecord(
     executionLocked: true,
     prices,
     signals,
+    dataSourceQuality,
   };
 }
 
@@ -916,6 +931,7 @@ export function emptyPaperJournal(
     regimePerformance: calculateRegimePerformance([]),
     assetPerformance: [],
     performanceTimeline: [],
+    dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
     recentOutcomes: [],
     message,
   };
@@ -1067,6 +1083,10 @@ export function evaluatePaperJournal(
       analyticsStartingCapital,
     ),
     performanceTimeline: performanceTimeline(analyticsOutcomes, nowMs),
+    dataSourceQualityHistory24h: calculateDataSourceQualityHistory(
+      analyticsRecords,
+      nowMs,
+    ),
     recentOutcomes: outcomes
       .filter((outcome) => signalModel(outcome) === "chart")
       .toReversed()

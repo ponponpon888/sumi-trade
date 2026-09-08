@@ -493,6 +493,24 @@ a {
   margin: 3px 0 0;
 }
 
+.data-source-history {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.data-source-history span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.data-source-history-healthy span { color: var(--lime); }
+.data-source-history-degraded span { color: var(--red); }
+
 .data-source-card-degraded {
   background: rgba(255, 189, 89, 0.045);
 }
