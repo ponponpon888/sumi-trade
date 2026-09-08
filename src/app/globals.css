@@ -1233,6 +1233,41 @@ a {
   color: #080a09;
 }
 
+.research-export-links {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.research-export-links span,
+.research-export-links a {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.research-export-links span {
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.research-export-links a {
+  border: 1px solid var(--line-strong);
+  color: #a8b1aa;
+  padding: 6px 8px;
+  text-decoration: none;
+}
+
+.research-export-links a:hover {
+  border-color: var(--lime);
+  color: var(--lime);
+}
+
 .journal-progress {
   background: linear-gradient(135deg, rgba(200, 255, 61, 0.055), transparent 42%), var(--surface);
   border: 1px solid var(--line);

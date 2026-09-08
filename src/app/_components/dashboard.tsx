@@ -892,6 +892,14 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
         </span>
       </div>
 
+      <nav className="research-export-links" aria-label="紙上分析データのダウンロード">
+        <span>RESEARCH EXPORT</span>
+        <a href="/api/paper/export">OUTCOMES CSV</a>
+        <a href="/api/paper/export?dataset=confidence&amp;format=csv">CONFIDENCE CSV</a>
+        <a href="/api/paper/export?dataset=regimes&amp;format=csv">REGIMES CSV</a>
+        <a href="/api/paper/export?dataset=research&amp;format=json">RESEARCH JSON</a>
+      </nav>
+
       <div className="journal-progress" aria-label={`採点済み ${journal.maturedCount} / ${journal.qualification.minimumSamples}`}>
         <div>
           <strong>{journal.maturedCount}</strong>

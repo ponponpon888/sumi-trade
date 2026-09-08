@@ -169,14 +169,28 @@ export async function getPaperJournalSnapshot(
   }
 }
 
+export async function getPaperJournalResearchExport(
+  walletAddress: string,
+  nowMs = Date.now(),
+): Promise<{
+  outcomes: PaperTradeOutcome[];
+  journal: PaperJournalSnapshot;
+}> {
+  const redis = getRedis();
+  if (!redis) throw new Error("Paper journal storage is unavailable.");
+  const records = await readRecords(redis, walletAddress, nowMs);
+  return {
+    outcomes: collectPaperTradeOutcomes(records, nowMs),
+    journal: evaluatePaperJournal(records, nowMs),
+  };
+}
+
 export async function getPaperJournalExportOutcomes(
   walletAddress: string,
   nowMs = Date.now(),
 ): Promise<PaperTradeOutcome[]> {
-  const redis = getRedis();
-  if (!redis) throw new Error("Paper journal storage is unavailable.");
-  const records = await readRecords(redis, walletAddress, nowMs);
-  return collectPaperTradeOutcomes(records, nowMs);
+  const result = await getPaperJournalResearchExport(walletAddress, nowMs);
+  return result.outcomes;
 }
 
 export async function recordPaperScan(
