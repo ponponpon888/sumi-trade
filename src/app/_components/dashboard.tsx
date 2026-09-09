@@ -1132,6 +1132,9 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
         <a href="/api/paper/export">OUTCOMES CSV</a>
         <a href="/api/paper/export?dataset=confidence&amp;format=csv">CONFIDENCE CSV</a>
         <a href="/api/paper/export?dataset=regimes&amp;format=csv">REGIMES CSV</a>
+        <a href="/api/paper/export?dataset=data-quality&amp;format=csv">DATA QUALITY CSV</a>
+        <a href="/api/paper/export?dataset=source-impact&amp;format=csv">SOURCE IMPACT CSV</a>
+        <a href="/api/paper/export?dataset=source-reasons&amp;format=csv">SOURCE REASONS CSV</a>
         <a href="/api/paper/export?dataset=research&amp;format=json">RESEARCH JSON</a>
       </nav>
 
@@ -1660,7 +1663,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-        <span>SUMI TRADE LAB / BUILD 1.25</span>
+        <span>SUMI TRADE LAB / BUILD 1.26</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

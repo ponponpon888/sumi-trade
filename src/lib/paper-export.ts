@@ -8,6 +8,9 @@ export type PaperExportDataset =
   | "outcomes"
   | "confidence"
   | "regimes"
+  | "data-quality"
+  | "source-impact"
+  | "source-reasons"
   | "research";
 export type PaperExportFormat = "csv" | "json";
 
@@ -179,6 +182,24 @@ export function buildPaperRegimeCsv(
   );
 }
 
+export function buildPaperDataQualityCsv(
+  performances: PaperJournalSnapshot["dataQualityPerformance"],
+): string {
+  return buildCsv(
+    ["quality_band", "status", "minimum_samples", "matured_count", "win_rate", "net_pnl_usd", "average_net_return_percent", "research_only", "execution_locked"],
+    performances.map((item) => [item.band, item.status, item.minimumSamples, item.maturedCount, item.winRate, item.netPnlUsd, item.averageNetReturnPercent, true, true]),
+  );
+}
+
+export function buildPaperSourceImpactCsv(
+  impacts: PaperJournalSnapshot["sourceQualityImpact"] | PaperJournalSnapshot["sourceReasonImpact"],
+): string {
+  return buildCsv(
+    ["source", "status", "minimum_samples_per_group", "decision_reason", "clean_count", "impaired_count", "clean_average_net_return_percent", "impaired_average_net_return_percent", "return_gap_percentage_points", "impaired_net_pnl_usd", "research_only", "execution_locked"],
+    impacts.map((item) => [item.source, item.status, item.minimumSamples, "reason" in item ? item.reason : null, item.cleanCount, item.impairedCount, item.cleanAverageNetReturnPercent, item.impairedAverageNetReturnPercent, item.returnGapPercentagePoints, item.impairedNetPnlUsd, true, true]),
+  );
+}
+
 export function buildPaperResearchJson(
   outcomes: PaperTradeOutcome[],
   journal: Pick<
@@ -186,6 +207,9 @@ export function buildPaperResearchJson(
     | "analyticsWindowDays"
     | "confidenceCalibrationByModel"
     | "regimePerformance"
+    | "dataQualityPerformance"
+    | "sourceQualityImpact"
+    | "sourceReasonImpact"
   >,
   generatedAt = new Date(),
 ): string {
@@ -201,6 +225,9 @@ export function buildPaperResearchJson(
       researchOnly: true,
       confidenceCalibrationByModel: journal.confidenceCalibrationByModel,
       regimePerformance: journal.regimePerformance,
+      dataQualityPerformance: journal.dataQualityPerformance,
+      sourceQualityImpact: journal.sourceQualityImpact,
+      sourceReasonImpact: journal.sourceReasonImpact,
       outcomes,
     },
     null,
@@ -218,7 +245,7 @@ export function parsePaperExportRequest(
       params.get("dataset") ?? (format === "json" ? "research" : "outcomes");
     if (
       (format === "csv" &&
-        ["outcomes", "confidence", "regimes"].includes(dataset)) ||
+        ["outcomes", "confidence", "regimes", "data-quality", "source-impact", "source-reasons"].includes(dataset)) ||
       (format === "json" && dataset === "research")
     ) {
       return {

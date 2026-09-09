@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildPaperConfidenceCsv,
+  buildPaperDataQualityCsv,
+  buildPaperSourceImpactCsv,
   buildPaperOutcomeCsv,
   buildPaperRegimeCsv,
   buildPaperResearchJson,
@@ -9,6 +11,7 @@ import {
   paperResearchExportFilename,
   parsePaperExportRequest,
 } from "@/lib/paper-export";
+import { calculateDataQualityPerformance, calculateSourceQualityImpact, calculateSourceReasonImpact } from "@/lib/paper-journal-core";
 import type {
   PaperConfidenceCalibration,
   PaperRegimePerformance,
@@ -135,6 +138,9 @@ describe("paper research export", () => {
           "community-trend": calibration("community-trend"),
         },
         regimePerformance: [regime()],
+        dataQualityPerformance: calculateDataQualityPerformance([outcome()]),
+        sourceQualityImpact: calculateSourceQualityImpact([outcome()]),
+        sourceReasonImpact: calculateSourceReasonImpact([outcome()]),
       },
       new Date("2026-09-08T12:00:00Z"),
     );
@@ -147,9 +153,32 @@ describe("paper research export", () => {
       executionLocked: true,
       researchOnly: true,
     });
+    expect(parsed.dataQualityPerformance).toEqual(calculateDataQualityPerformance([outcome()]));
+    expect(parsed.sourceQualityImpact).toEqual(calculateSourceQualityImpact([outcome()]));
+    expect(parsed.sourceReasonImpact).toEqual(calculateSourceReasonImpact([outcome()]));
     expect(parsed.outcomes).toHaveLength(1);
     expect(parsed.outcomes[0].decisionReasons).toHaveLength(2);
     expect(parsed.regimePerformance[0].regime).toBe("uptrend");
+  });
+
+  it("preserves unknown legacy data and collecting sample counts in quality CSV", () => {
+    const samples = [outcome(), outcome({ entryDataQuality: undefined })];
+    const csv = buildPaperDataQualityCsv(calculateDataQualityPerformance(samples));
+    expect(csv).toContain("partial,collecting,10,1,100,3,6,true,true");
+    expect(csv).toContain("unknown,collecting,10,1,100,3,6,true,true");
+    const sourceCsv = buildPaperSourceImpactCsv(calculateSourceQualityImpact(samples));
+    expect(sourceCsv).toContain("geckoterminal,collecting,10,,0,1,");
+  });
+
+  it("preserves reason attribution and neutralizes formula-like reasons", () => {
+    const csv = buildPaperSourceImpactCsv([{
+      source: "geckoterminal", status: "performance-alert", minimumSamples: 5,
+      reason: "=SUM(1,2)", cleanCount: 5, impairedCount: 6,
+      cleanAverageNetReturnPercent: 2, impairedAverageNetReturnPercent: -1,
+      returnGapPercentagePoints: -3, impairedNetPnlUsd: -6,
+    }]);
+    expect(csv).toContain('"\'=SUM(1,2)"');
+    expect(csv).toContain(",5,6,2,-1,-3,-6,true,true");
   });
 
   it("accepts only supported dataset and format combinations", () => {

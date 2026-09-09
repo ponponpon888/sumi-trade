@@ -1,6 +1,8 @@
 import { getWalletAddress } from "@/lib/config";
 import {
   buildPaperConfidenceCsv,
+  buildPaperDataQualityCsv,
+  buildPaperSourceImpactCsv,
   buildPaperOutcomeCsv,
   buildPaperRegimeCsv,
   buildPaperResearchJson,
@@ -31,7 +33,13 @@ export async function GET(request: Request) {
           ? buildPaperConfidenceCsv(journal.confidenceCalibrationByModel)
           : selection.dataset === "regimes"
             ? buildPaperRegimeCsv(journal.regimePerformance)
-            : buildPaperResearchJson(outcomes, journal);
+            : selection.dataset === "data-quality"
+              ? buildPaperDataQualityCsv(journal.dataQualityPerformance)
+              : selection.dataset === "source-impact"
+                ? buildPaperSourceImpactCsv(journal.sourceQualityImpact)
+                : selection.dataset === "source-reasons"
+                  ? buildPaperSourceImpactCsv(journal.sourceReasonImpact)
+                  : buildPaperResearchJson(outcomes, journal);
 
     return new Response(body, {
       status: 200,

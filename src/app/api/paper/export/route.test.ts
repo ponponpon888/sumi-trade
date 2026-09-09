@@ -22,6 +22,9 @@ describe("integrated research export route", () => {
     ["", "text/csv", "signal_time", "outcomes"],
     ["?dataset=confidence&format=csv", "text/csv", "confidence_band", "confidence"],
     ["?dataset=regimes&format=csv", "text/csv", "market_regime", "regimes"],
+    ["?dataset=data-quality&format=csv", "text/csv", "quality_band", "data-quality"],
+    ["?dataset=source-impact&format=csv", "text/csv", "clean_count", "source-impact"],
+    ["?dataset=source-reasons&format=csv", "text/csv", "decision_reason", "source-reasons"],
     ["?dataset=research&format=json", "application/json", '"executionLocked": true', "research"],
   ])("serves the selected dataset %s from one journal read", async (query, type, content, dataset) => {
     const response = await GET(new Request(`https://example.test/api/paper/export${query}`));
