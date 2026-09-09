@@ -177,16 +177,15 @@ export function calculateDataSourceQualityHistory(
   nowMs = Date.now(),
 ): DataSourceQualityHistoryItem[] {
   const windowStart = nowMs - DATA_SOURCE_HISTORY_WINDOW_MS;
-  const observations = records
-    .filter(
-      (record) =>
-        record.bucketTimeMs >= windowStart && record.bucketTimeMs <= nowMs,
-    )
-    .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
+  // Freshness uses all retained observations; the quality statistics stay 24h-only.
+  const observations = records.filter((record) => record.bucketTimeMs <= nowMs);
 
   return DATA_SOURCE_IDS.map((source) => {
-    const sourceObservations = uniqueSourceObservations(observations, source);
-    const lastObservedMs = sourceObservations.at(-1)?.bucketTimeMs;
+    const retainedObservations = uniqueSourceObservations(observations, source);
+    const sourceObservations = retainedObservations.filter(
+      (observation) => observation.bucketTimeMs >= windowStart,
+    );
+    const lastObservedMs = retainedObservations.at(-1)?.bucketTimeMs;
     const lastObservedAt = lastObservedMs === undefined ? null : new Date(lastObservedMs).toISOString();
     const observationAgeSeconds = lastObservedMs === undefined ? null : Math.max(0, (nowMs - lastObservedMs) / 1_000);
     const observationCount = sourceObservations.length;

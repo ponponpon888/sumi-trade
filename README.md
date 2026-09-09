@@ -360,3 +360,7 @@ KyberSwap Aggregator APIのルート照会にはAPIキーを保存せず、公�
 - 署名経路を追加するまでは、コード上も実資産を動かせない
 - Vercel上ではBasic認証を必須化し、未設定時は失敗側へ閉じる
 - ERC-20の無期限・無制限承認を使わない
+
+### Source freshness across the statistics window
+
+Source freshness uses the latest retained observation at or before the evaluation time, even when older than 24 hours. Availability, coverage, observation counts and failure streaks still use only the 24-hour window. A stopped source therefore remains stale while its last observation is retained; a source with no retained observation remains collecting. Future observations are ignored.

@@ -321,4 +321,28 @@ describe("data source quality", () => {
     expect(select(last + 1_200_000)).toMatchObject({ status: "healthy", observationAgeSeconds: 0 });
   });
 
+  it("keeps retained observations stale after they leave the 24-hour statistics window", () => {
+    const last = Date.parse("2026-09-09T12:00:00Z");
+    const records = [historyRecord(last)];
+    const select = (now: number) => calculateDataSourceQualityHistory(records, now)
+      .find((item) => item.source === "ethereum-rpc");
+    expect(select(last + 86_400_000)).toMatchObject({ status: "stale", observationCount: 1 });
+    expect(select(last + 86_401_000)).toMatchObject({
+      status: "stale", observationCount: 0, availabilityPercent: 0,
+      lastObservedAt: new Date(last).toISOString(), observationAgeSeconds: 86_401,
+    });
+    records.push(historyRecord(last + 86_401_000));
+    expect(select(last + 86_401_000)).toMatchObject({ status: "collecting", observationCount: 1, observationAgeSeconds: 0 });
+  });
+
+  it("ignores future observations when determining retained freshness", () => {
+    const now = Date.parse("2026-09-09T12:00:00Z");
+    const past = now - 90_000_000;
+    const records = [historyRecord(now + 300_000), historyRecord(past)];
+    expect(calculateDataSourceQualityHistory(records, now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ status: "stale", observationCount: 0, lastObservedAt: new Date(past).toISOString() });
+    expect(calculateDataSourceQualityHistory([records[0]], now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ status: "collecting", lastObservedAt: null });
+  });
+
 });
