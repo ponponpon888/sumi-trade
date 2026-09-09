@@ -17,6 +17,7 @@ import type {
   ChartDirection,
   ChartMarketContext,
   ChartRiskPlan,
+  MarketRegime,
   OhlcvCandle,
   RegimeAssessment,
   StrategyComparisonId,
@@ -33,6 +34,13 @@ const MIN_MODEL_CANDLES = 260;
 const BACKTEST_CAPITAL_USD = 1_000;
 const WALK_FORWARD_TRAIN_CANDLES = 360;
 const WALK_FORWARD_TEST_CANDLES = 120;
+const MARKET_REGIME_ORDER: MarketRegime[] = [
+  "uptrend",
+  "downtrend",
+  "range",
+  "high-volatility",
+  "low-liquidity",
+];
 
 type BacktestTrade = RobustnessTrade & {
   netPnlUsd: number;
@@ -682,6 +690,95 @@ const STRATEGY_DEFINITIONS: Array<{
   },
 ];
 
+function compareStrategiesByRegime(
+  candles: OhlcvCandle[],
+  marketContext: ChartMarketContext,
+): StrategyComparisonSnapshot["walkForwardByRegime"] {
+  const windows: Array<{
+    regime: MarketRegime;
+    simulations: Map<StrategyComparisonId, SimulationResult>;
+  }> = [];
+
+  for (
+    let testStart = WALK_FORWARD_TRAIN_CANDLES;
+    testStart + WALK_FORWARD_TEST_CANDLES <= candles.length;
+    testStart += WALK_FORWARD_TEST_CANDLES
+  ) {
+    const regime = calculateSnapshot(
+      candles.slice(0, testStart),
+      marketContext,
+    ).regime.regime;
+    windows.push({
+      regime,
+      simulations: new Map(
+        STRATEGY_DEFINITIONS.map((definition) => [
+          definition.id,
+          runSimulation(
+            candles,
+            testStart,
+            testStart + WALK_FORWARD_TEST_CANDLES,
+            marketContext,
+            definition.evaluate,
+          ),
+        ]),
+      ),
+    });
+  }
+
+  return MARKET_REGIME_ORDER.flatMap((regime) => {
+    const regimeWindows = windows.filter((window) => window.regime === regime);
+    if (regimeWindows.length === 0) return [];
+
+    const ranked = STRATEGY_DEFINITIONS.map((definition) => {
+      const simulations = regimeWindows.flatMap((window) => {
+        const simulation = window.simulations.get(definition.id);
+        return simulation ? [simulation] : [];
+      });
+      const compounded = simulations.reduce(
+        (capital, simulation) =>
+          capital * (1 + simulation.netReturnPercent / 100),
+        BACKTEST_CAPITAL_USD,
+      );
+      return {
+        id: definition.id,
+        name: definition.name,
+        windowCount: simulations.length,
+        tradeCount: simulations.reduce(
+          (total, simulation) => total + simulation.tradeCount,
+          0,
+        ),
+        profitableWindowRate: round(
+          (simulations.filter((simulation) => simulation.netReturnPercent > 0)
+            .length /
+            simulations.length) *
+            100,
+          1,
+        ),
+        netReturnPercent: round(
+          ((compounded - BACKTEST_CAPITAL_USD) / BACKTEST_CAPITAL_USD) * 100,
+          2,
+        ),
+      };
+    })
+      .toSorted(
+        (left, right) =>
+          right.netReturnPercent - left.netReturnPercent ||
+          left.id.localeCompare(right.id),
+      )
+      .map((result, index) => ({ ...result, rank: index + 1 }));
+
+    return [
+      {
+        regime,
+        windowCount: regimeWindows.length,
+        leaderId: ranked[0]?.id ?? null,
+        researchOnly: true as const,
+        results: ranked,
+      },
+    ];
+  });
+}
+
 export function compareStrategies(
   candles: OhlcvCandle[],
   existingSumiBacktest?: BacktestResult,
@@ -694,6 +791,7 @@ export function compareStrategies(
       leaderId: null,
       researchOnly: true,
       results: [],
+      walkForwardByRegime: [],
       notes: [`比較には${MIN_MODEL_CANDLES}本以上の確定足が必要`],
     };
   }
@@ -740,8 +838,10 @@ export function compareStrategies(
     leaderId: ranked[0]?.id ?? null,
     researchOnly: true,
     results: ranked,
+    walkForwardByRegime: compareStrategiesByRegime(candles, marketContext),
     notes: [
       "全戦略を同じ確定足・次足始値・ガス・スリッページ条件で比較",
+      "各10時間テスト窓を開始時点までの情報で局面分類",
       "首位戦略への自動切替は行わず、研究表示だけに使用",
     ],
   };
