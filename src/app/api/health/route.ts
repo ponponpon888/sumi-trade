@@ -43,7 +43,7 @@ export async function GET() {
     {
       ok: true,
       service: "sumi-trade-lab",
-      buildVersion: "1.27.2",
+      buildVersion: "1.27.3",
       mode: "paper",
       executionLocked: true,
       configurationStatus: runtimeConfiguration.status,

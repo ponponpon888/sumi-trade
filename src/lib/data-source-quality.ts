@@ -19,6 +19,25 @@ const DATA_SOURCE_IDS: DataSourceId[] = [
   "kyberswap",
 ];
 
+const SCAN_INTERVAL_MS = 5 * 60_000;
+
+type TimedQuality = { status: DataSourceQualityItem["status"]; bucketTimeMs: number };
+
+function trailingConsecutiveCount(
+  observations: TimedQuality[],
+  status: TimedQuality["status"],
+): number {
+  let count = 0;
+  let nextTime: number | undefined;
+  for (const observation of observations.toReversed()) {
+    if (observation.status !== status) break;
+    if (nextTime !== undefined && nextTime - observation.bucketTimeMs !== SCAN_INTERVAL_MS) break;
+    count += 1;
+    nextTime = observation.bucketTimeMs;
+  }
+  return count;
+}
+
 function round(value: number, digits = 1): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -146,7 +165,9 @@ export function calculateDataSourceQualityHistory(
 
   return DATA_SOURCE_IDS.map((source) => {
     const sourceObservations = observations.flatMap((record) =>
-      record.dataSourceQuality?.filter((item) => item.source === source) ?? [],
+      (record.dataSourceQuality ?? [])
+        .filter((item) => item.source === source)
+        .map((item) => ({ ...item, bucketTimeMs: record.bucketTimeMs })),
     );
     const observationCount = sourceObservations.length;
     const availableCount = sourceObservations.filter(
@@ -163,11 +184,7 @@ export function calculateDataSourceQualityHistory(
         ) / observationCount,
       )
       : 0;
-    let currentFailureStreak = 0;
-    for (const observation of sourceObservations.toReversed()) {
-      if (observation.status !== "unavailable") break;
-      currentFailureStreak += 1;
-    }
+    const currentFailureStreak = trailingConsecutiveCount(sourceObservations, "unavailable");
     const status = observationCount < DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS
       ? "collecting"
       : availabilityPercent >= 95 &&
@@ -210,12 +227,15 @@ export function calculateDataSourceIncidents(
     let recoveryStreak = 0;
     let incidentOpen = false;
     let incidentCount24h = 0;
-    let currentFailureStreak = 0;
-    let currentRecoveryStreak = 0;
     let latestIncidentStartedAt: string | null = null;
     let latestRecoveredAt: string | null = null;
 
     for (const [index, observation] of sourceObservations.entries()) {
+      const previous = sourceObservations[index - 1];
+      if (previous && observation.bucketTimeMs - previous.bucketTimeMs !== SCAN_INTERVAL_MS) {
+        failureStreak = 0;
+        recoveryStreak = 0;
+      }
       if (!incidentOpen) {
         failureStreak = observation.status === "unavailable"
           ? failureStreak + 1
@@ -242,16 +262,10 @@ export function calculateDataSourceIncidents(
       }
     }
 
-    for (const observation of sourceObservations.toReversed()) {
-      if (observation.status !== "unavailable") break;
-      currentFailureStreak += 1;
-    }
-    if (incidentOpen) {
-      for (const observation of sourceObservations.toReversed()) {
-        if (observation.status !== "healthy") break;
-        currentRecoveryStreak += 1;
-      }
-    }
+    const currentFailureStreak = trailingConsecutiveCount(sourceObservations, "unavailable");
+    const currentRecoveryStreak = incidentOpen
+      ? trailingConsecutiveCount(sourceObservations, "healthy")
+      : 0;
 
     const status = incidentOpen
       ? "incident"

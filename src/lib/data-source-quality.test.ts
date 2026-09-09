@@ -248,4 +248,34 @@ describe("data source quality", () => {
       currentRecoveryStreak: 1,
     });
   });
+  it("does not combine failures across a missing five-minute slot", () => {
+    const now = Date.parse("2026-09-09T12:00:00Z");
+    const records = [20, 10, 0].map((minutes) => historyRecord(now - minutes * 60_000, "unavailable"));
+    expect(calculateDataSourceIncidents(records, now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ status: "collecting", incidentCount24h: 0, currentFailureStreak: 1 });
+    expect(calculateDataSourceQualityHistory(records, now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ currentFailureStreak: 1 });
+  });
+
+  it("keeps an open incident through missing observations and restarts recovery", () => {
+    const start = Date.parse("2026-09-09T10:00:00Z");
+    const records = [0, 5, 10].map((minutes) => historyRecord(start + minutes * 60_000, "unavailable"));
+    records.push(historyRecord(start + 15 * 60_000), historyRecord(start + 20 * 60_000));
+    const missing = historyRecord(start + 25 * 60_000);
+    delete missing.dataSourceQuality;
+    records.push(missing, historyRecord(start + 30 * 60_000));
+    const incident = calculateDataSourceIncidents(records, start + 30 * 60_000).find((item) => item.source === "ethereum-rpc");
+    expect(incident).toMatchObject({ status: "incident", incidentCount24h: 1, currentRecoveryStreak: 1, latestRecoveredAt: null });
+    records.push(historyRecord(start + 35 * 60_000), historyRecord(start + 40 * 60_000));
+    expect(calculateDataSourceIncidents(records, start + 40 * 60_000).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ status: "recovered", latestRecoveredAt: new Date(start + 40 * 60_000).toISOString() });
+  });
+
+  it("does not treat repeated records in one slot as consecutive failures", () => {
+    const now = Date.parse("2026-09-09T12:00:00Z");
+    const record = historyRecord(now, "unavailable");
+    expect(calculateDataSourceIncidents([record, record, record], now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ incidentCount24h: 0, currentFailureStreak: 1 });
+  });
+
 });
