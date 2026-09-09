@@ -1,6 +1,7 @@
 import { getWalletAddress } from "@/lib/config";
 import {
   buildPaperConfidenceCsv,
+  createPaperExportContext,
   buildPaperDataQualityCsv,
   buildPaperSourceImpactCsv,
   buildPaperOutcomeCsv,
@@ -23,34 +24,37 @@ export async function GET(request: Request) {
   }
 
   try {
+    const asOf = new Date();
     const { outcomes, journal } = await getPaperJournalResearchExport(
       getWalletAddress(),
+      asOf.getTime(),
     );
-    const body =
-      selection.dataset === "outcomes"
-        ? buildPaperOutcomeCsv(outcomes)
-        : selection.dataset === "confidence"
-          ? buildPaperConfidenceCsv(journal.confidenceCalibrationByModel)
-          : selection.dataset === "regimes"
-            ? buildPaperRegimeCsv(journal.regimePerformance)
-            : selection.dataset === "data-quality"
-              ? buildPaperDataQualityCsv(journal.dataQualityPerformance)
-              : selection.dataset === "source-impact"
-                ? buildPaperSourceImpactCsv(journal.sourceQualityImpact)
-                : selection.dataset === "source-reasons"
-                  ? buildPaperSourceImpactCsv(journal.sourceReasonImpact)
-                  : buildPaperResearchJson(outcomes, journal);
+    const context = createPaperExportContext(asOf, journal.analyticsWindowDays);
+    const render = {
+      outcomes: () => buildPaperOutcomeCsv(outcomes, context),
+      confidence: () => buildPaperConfidenceCsv(journal.confidenceCalibrationByModel, context),
+      regimes: () => buildPaperRegimeCsv(journal.regimePerformance, context),
+      "data-quality": () => buildPaperDataQualityCsv(journal.dataQualityPerformance, context),
+      "source-impact": () => buildPaperSourceImpactCsv(journal.sourceQualityImpact, context),
+      "source-reasons": () => buildPaperSourceImpactCsv(journal.sourceReasonImpact, context),
+      research: () => buildPaperResearchJson(outcomes, journal, asOf),
+    };
+    const body = render[selection.dataset]();
 
     return new Response(body, {
       status: 200,
       headers: {
         "Cache-Control": "private, no-store",
-        "Content-Disposition": `attachment; filename="${paperResearchExportFilename(selection)}"`,
+        "Content-Disposition": `attachment; filename="${paperResearchExportFilename(selection, asOf)}"`,
         "Content-Type":
           selection.format === "json"
             ? "application/json; charset=utf-8"
             : "text/csv; charset=utf-8",
         "X-Content-Type-Options": "nosniff",
+        "X-Sumi-Export-As-Of": context.asOf,
+        "X-Sumi-Window-Start": context.windowStart,
+        "X-Sumi-Window-End": context.windowEnd,
+        "X-Sumi-Window-Time-Basis": context.timeBasis,
       },
     });
   } catch {

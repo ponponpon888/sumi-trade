@@ -19,6 +19,29 @@ export interface PaperExportSelection {
   format: PaperExportFormat;
 }
 
+export interface PaperExportContext {
+  asOf: string;
+  windowStart: string;
+  windowEnd: string;
+  timeBasis: "outcome_time";
+}
+
+export function createPaperExportContext(
+  asOf: Date,
+  analyticsWindowDays: number,
+): PaperExportContext {
+  const end = asOf.getTime();
+  if (!Number.isFinite(end) || !Number.isFinite(analyticsWindowDays) || analyticsWindowDays <= 0) {
+    throw new Error("Invalid paper export period.");
+  }
+  return {
+    asOf: asOf.toISOString(),
+    windowStart: new Date(end - analyticsWindowDays * 86_400_000).toISOString(),
+    windowEnd: asOf.toISOString(),
+    timeBasis: "outcome_time",
+  };
+}
+
 const OUTCOME_CSV_HEADERS = [
   "signal_time",
   "outcome_time",
@@ -98,14 +121,17 @@ function csvCell(
 function buildCsv(
   headers: readonly string[],
   rows: Array<Array<string | number | boolean | null | undefined>>,
+  context?: PaperExportContext,
 ): string {
+  const metadataHeaders = context ? ["export_as_of", "window_start", "window_end", "window_time_basis"] : [];
+  const metadata = context ? [context.asOf, context.windowStart, context.windowEnd, context.timeBasis] : [];
   return `\uFEFF${[
-    headers.join(","),
-    ...rows.map((row) => row.map(csvCell).join(",")),
+    [...headers, ...metadataHeaders].join(","),
+    ...rows.map((row) => [...row, ...metadata].map(csvCell).join(",")),
   ].join("\r\n")}\r\n`;
 }
 
-export function buildPaperOutcomeCsv(outcomes: PaperTradeOutcome[]): string {
+export function buildPaperOutcomeCsv(outcomes: PaperTradeOutcome[], context?: PaperExportContext): string {
   return buildCsv(
     OUTCOME_CSV_HEADERS,
     outcomes.map((outcome) => [
@@ -134,11 +160,13 @@ export function buildPaperOutcomeCsv(outcomes: PaperTradeOutcome[]): string {
       outcome.won,
       true,
     ]),
+    context,
   );
 }
 
 export function buildPaperConfidenceCsv(
   calibrations: PaperJournalSnapshot["confidenceCalibrationByModel"],
+  context?: PaperExportContext,
 ): string {
   return buildCsv(
     CONFIDENCE_CSV_HEADERS,
@@ -158,11 +186,13 @@ export function buildPaperConfidenceCsv(
         true,
       ]),
     ),
+    context,
   );
 }
 
 export function buildPaperRegimeCsv(
   performances: PaperRegimePerformance[],
+  context?: PaperExportContext,
 ): string {
   return buildCsv(
     REGIME_CSV_HEADERS,
@@ -179,24 +209,29 @@ export function buildPaperRegimeCsv(
       true,
       true,
     ]),
+    context,
   );
 }
 
 export function buildPaperDataQualityCsv(
   performances: PaperJournalSnapshot["dataQualityPerformance"],
+  context?: PaperExportContext,
 ): string {
   return buildCsv(
     ["quality_band", "status", "minimum_samples", "matured_count", "win_rate", "net_pnl_usd", "average_net_return_percent", "research_only", "execution_locked"],
     performances.map((item) => [item.band, item.status, item.minimumSamples, item.maturedCount, item.winRate, item.netPnlUsd, item.averageNetReturnPercent, true, true]),
+    context,
   );
 }
 
 export function buildPaperSourceImpactCsv(
   impacts: PaperJournalSnapshot["sourceQualityImpact"] | PaperJournalSnapshot["sourceReasonImpact"],
+  context?: PaperExportContext,
 ): string {
   return buildCsv(
     ["source", "status", "minimum_samples_per_group", "decision_reason", "clean_count", "impaired_count", "clean_average_net_return_percent", "impaired_average_net_return_percent", "return_gap_percentage_points", "impaired_net_pnl_usd", "research_only", "execution_locked"],
     impacts.map((item) => [item.source, item.status, item.minimumSamples, "reason" in item ? item.reason : null, item.cleanCount, item.impairedCount, item.cleanAverageNetReturnPercent, item.impairedAverageNetReturnPercent, item.returnGapPercentagePoints, item.impairedNetPnlUsd, true, true]),
+    context,
   );
 }
 
@@ -220,6 +255,15 @@ export function buildPaperResearchJson(
     {
       schemaVersion: 1,
       generatedAt: timestamp,
+      analysisWindow: createPaperExportContext(new Date(timestamp), journal.analyticsWindowDays),
+      modelScope: {
+        outcomes: "chart-and-community-trend",
+        confidenceCalibrationByModel: "chart-and-community-trend",
+        regimePerformance: "chart",
+        dataQualityPerformance: "chart",
+        sourceQualityImpact: "chart",
+        sourceReasonImpact: "chart",
+      },
       analyticsWindowDays: journal.analyticsWindowDays,
       executionLocked: true,
       researchOnly: true,

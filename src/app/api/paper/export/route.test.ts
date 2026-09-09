@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/paper/export/route";
 import { emptyPaperJournal } from "@/lib/paper-journal-core";
@@ -12,11 +12,15 @@ vi.mock("@/lib/paper-journal", () => ({
 describe("integrated research export route", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-09T23:59:59.000Z"));
     vi.mocked(getPaperJournalResearchExport).mockResolvedValue({
       outcomes: [],
       journal: emptyPaperJournal("disabled", "No observations"),
     });
   });
+
+  afterEach(() => vi.useRealTimers());
 
   it.each([
     ["", "text/csv", "signal_time", "outcomes"],
@@ -34,8 +38,28 @@ describe("integrated research export route", () => {
     expect(response.headers.get("Content-Disposition")).toContain(`sumi-paper-${dataset}-`);
     const body = await response.text();
     expect(body).toContain(content);
+    expect(response.headers.get("X-Sumi-Export-As-Of")).toBe("2026-09-09T23:59:59.000Z");
+    expect(response.headers.get("X-Sumi-Window-Time-Basis")).toBe("outcome_time");
     expect(body).not.toContain("test-wallet");
-    expect(getPaperJournalResearchExport).toHaveBeenCalledExactlyOnceWith("test-wallet");
+    expect(getPaperJournalResearchExport).toHaveBeenCalledExactlyOnceWith("test-wallet", Date.parse("2026-09-09T23:59:59.000Z"));
+  });
+
+  it("keeps one cutoff across storage, JSON and filename when the read crosses midnight", async () => {
+    vi.mocked(getPaperJournalResearchExport).mockImplementation(async () => {
+      vi.setSystemTime(new Date("2026-09-10T00:00:05.000Z"));
+      return { outcomes: [], journal: emptyPaperJournal("disabled", "No observations") };
+    });
+    const response = await GET(new Request("https://example.test/api/paper/export?format=json"));
+    const body = await response.json();
+    expect(body.generatedAt).toBe("2026-09-09T23:59:59.000Z");
+    expect(body.analysisWindow).toEqual({
+      asOf: body.generatedAt,
+      windowStart: "2026-08-10T23:59:59.000Z",
+      windowEnd: body.generatedAt,
+      timeBasis: "outcome_time",
+    });
+    expect(response.headers.get("Content-Disposition")).toContain("2026-09-09.json");
+    expect(getPaperJournalResearchExport).toHaveBeenCalledExactlyOnceWith("test-wallet", Date.parse(body.generatedAt));
   });
 
   it("rejects unsupported selections before reading storage", async () => {

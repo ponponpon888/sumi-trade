@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildPaperConfidenceCsv,
+  createPaperExportContext,
   buildPaperDataQualityCsv,
   buildPaperSourceImpactCsv,
   buildPaperOutcomeCsv,
@@ -156,6 +157,8 @@ describe("paper research export", () => {
     expect(parsed.dataQualityPerformance).toEqual(calculateDataQualityPerformance([outcome()]));
     expect(parsed.sourceQualityImpact).toEqual(calculateSourceQualityImpact([outcome()]));
     expect(parsed.sourceReasonImpact).toEqual(calculateSourceReasonImpact([outcome()]));
+    expect(parsed.modelScope.sourceQualityImpact).toBe("chart");
+    expect(parsed.modelScope.outcomes).toBe("chart-and-community-trend");
     expect(parsed.outcomes).toHaveLength(1);
     expect(parsed.outcomes[0].decisionReasons).toHaveLength(2);
     expect(parsed.regimePerformance[0].regime).toBe("uptrend");
@@ -179,6 +182,16 @@ describe("paper research export", () => {
     }]);
     expect(csv).toContain('"\'=SUM(1,2)"');
     expect(csv).toContain(",5,6,2,-1,-3,-6,true,true");
+  });
+
+  it("appends UTC period metadata without moving existing CSV columns", () => {
+    const context = createPaperExportContext(new Date("2026-09-09T00:00:00Z"), 30);
+    const original = buildPaperOutcomeCsv([outcome()]).trimEnd().split("\r\n");
+    const annotated = buildPaperOutcomeCsv([outcome()], context).trimEnd().split("\r\n");
+    expect(annotated[0]).toBe(`${original[0]},export_as_of,window_start,window_end,window_time_basis`);
+    expect(annotated[1]).toBe(`${original[1]},2026-09-09T00:00:00.000Z,2026-08-10T00:00:00.000Z,2026-09-09T00:00:00.000Z,outcome_time`);
+    expect(() => createPaperExportContext(new Date("invalid"), 30)).toThrow();
+    expect(() => createPaperExportContext(new Date(), 0)).toThrow();
   });
 
   it("accepts only supported dataset and format combinations", () => {
