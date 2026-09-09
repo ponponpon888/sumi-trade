@@ -99,7 +99,10 @@ const REGIME_CSV_HEADERS = [
 ] as const;
 
 function safeText(value: string): string {
-  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+  // Spreadsheet importers may ignore leading whitespace/control characters.
+  // Preserve the source text while forcing potentially active cells to text.
+  const unsafe = /^[\s\p{Cc}\p{Cf}]*[=+\-@]|^[\p{Cc}\p{Cf}]/u.test(value);
+  return unsafe ? `'${value}` : value;
 }
 
 function csvCell(

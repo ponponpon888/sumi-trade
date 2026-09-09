@@ -114,6 +114,29 @@ describe("paper research export", () => {
     expect(csv).toContain('"A,B"');
   });
 
+  it.each([
+    " =1+1", "\t=1+1", "\r=1+1", "\n=1+1", "  +1+1",
+    " -1+1", " @SUM(A1)", "\u00a0=1+1", "\u200b=1+1",
+    "\tplain text", "\u0000=1+1", "  \t=1+1",
+  ])("neutralizes a disguised active CSV cell: %j", (value) => {
+    const csv = buildPaperOutcomeCsv([outcome({ decisionId: value })]);
+    const protectedValue = `'${value}`;
+    const expectedCell = /[",\r\n]/.test(protectedValue)
+      ? `"${protectedValue.replaceAll('"', '""')}"`
+      : protectedValue;
+    expect(csv).toContain(`,${expectedCell},SUMI,`);
+  });
+
+  it("keeps ordinary labels and numeric losses unchanged", () => {
+    const csv = buildPaperOutcomeCsv([outcome({
+      decisionId: "ordinary-id", symbol: " SUMI", netPnlUsd: -3,
+      netReturnPercent: -6, won: false,
+    })]);
+    expect(csv).toContain(",ordinary-id, SUMI,BUY,");
+    expect(csv).toContain(",10,-6,-3,true,false,true");
+    expect(csv).not.toContain("'-6");
+  });
+
   it("exports confidence calibration and regime alert summaries", () => {
     const confidenceCsv = buildPaperConfidenceCsv({
       chart: calibration("chart"),
