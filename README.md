@@ -372,3 +372,5 @@ Source freshness uses the latest retained observation at or before the evaluatio
 ### Automated source monitoring
 
 The production health checker blocks on stale/degraded source quality and open source incidents. Missing or unknown quality/incident states also block. Collecting observations produces a `DATA_SOURCE_COLLECTING` report warning without failing the check; recovered incidents are accepted. Reports retain only known source IDs and recognized source status values. These checks take effect when the integration branch is deployed to production.
+
+The health checker also examines affected-source lists independently of summary statuses: known stale/degraded/open-incident entries block even if the summary says healthy or recovered. Collecting entries preserve the collection warning. Missing, non-array or unknown-ID lists block with `DATA_SOURCE_LIST_INVALID`; reports still filter unknown values.

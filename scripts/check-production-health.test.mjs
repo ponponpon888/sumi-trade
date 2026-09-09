@@ -9,6 +9,7 @@ const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.u
 const valid = {
   buildVersion: version, mode: "paper", executionLocked: true,
   configurationStatus: "pass", safetyStatus: "monitoring",
+  staleDataSources: [], degradedDataSources: [], collectingDataSources: [], openDataSourceIncidents: [],
   paperEngineStatus: "live", dataSourceQualityStatus: "healthy", dataSourceIncidentStatus: "monitoring",
 };
 const preload = `
@@ -34,6 +35,15 @@ const cases = [
   ["missing incident status", { dataSourceIncidentStatus: undefined }, 1],
   ["invalid incident status", { dataSourceIncidentStatus: "secret-value" }, 1],
   ["filters source details", { dataSourceQualityStatus: "stale", staleDataSources: ["ethereum-rpc", "secret-value", "ethereum-rpc"] }, 1],
+  ["stale list overrides healthy summary", { staleDataSources: ["ethereum-rpc"] }, 1],
+  ["degraded list overrides healthy summary", { degradedDataSources: ["dexscreener"] }, 1],
+  ["open incident list overrides recovered summary", { dataSourceIncidentStatus: "recovered", openDataSourceIncidents: ["kyberswap"] }, 1],
+  ["collecting list retains warning", { collectingDataSources: ["geckoterminal"] }, 0],
+  ["all source problems remain visible", { staleDataSources: ["ethereum-rpc"], degradedDataSources: ["dexscreener"], openDataSourceIncidents: ["kyberswap"] }, 1],
+  ["missing source list", { staleDataSources: undefined }, 1],
+  ["null source list", { degradedDataSources: null }, 1],
+  ["wrong source list type", { openDataSourceIncidents: "secret-value" }, 1],
+  ["unknown source ID", { collectingDataSources: ["secret-value"] }, 1],
   ["intentional safety stop", { safetyStatus: "stopped" }, 0],
   ["blocked configuration with empty details", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: [] } }, 1, 200, []],
   ["reports only known configuration keys", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: ["WALLET_ADDRESS", "SAFETY_CONTROL_SECRET", "UNTRUSTED_VALUE", "WALLET_ADDRESS"] } }, 1, 200, ["WALLET_ADDRESS", "SAFETY_CONTROL_SECRET"]],
@@ -80,10 +90,14 @@ for (const [name, patch, expected, httpStatus = 200, expectedConfigurationIssues
       assert.ok(!JSON.stringify(report).includes("secret-value"));
       assert.ok(!(result.stdout + result.stderr).includes("secret-value"));
       if (report.status !== "unavailable") {
-        assert.deepEqual(report.warnings, patch?.dataSourceQualityStatus === "collecting" || patch?.dataSourceIncidentStatus === "collecting" ? ["DATA_SOURCE_COLLECTING"] : []);
-        if (patch?.dataSourceQualityStatus === "stale") assert.ok(report.failures.includes("DATA_SOURCE_STALE"));
-        if (patch?.dataSourceQualityStatus === "degraded") assert.ok(report.failures.includes("DATA_SOURCE_DEGRADED"));
-        if (patch?.dataSourceIncidentStatus === "incident") assert.ok(report.failures.includes("DATA_SOURCE_INCIDENT"));
+        assert.deepEqual(report.warnings, patch?.dataSourceQualityStatus === "collecting" || patch?.dataSourceIncidentStatus === "collecting" || patch?.collectingDataSources?.includes("geckoterminal") ? ["DATA_SOURCE_COLLECTING"] : []);
+        if (patch?.dataSourceQualityStatus === "stale" || patch?.staleDataSources?.includes("ethereum-rpc")) assert.ok(report.failures.includes("DATA_SOURCE_STALE"));
+        if (patch?.dataSourceQualityStatus === "degraded" || patch?.degradedDataSources?.includes("dexscreener")) assert.ok(report.failures.includes("DATA_SOURCE_DEGRADED"));
+        if (patch?.dataSourceIncidentStatus === "incident" || patch?.openDataSourceIncidents?.includes("kyberswap")) assert.ok(report.failures.includes("DATA_SOURCE_INCIDENT"));
+        const merged = { ...valid, ...patch };
+        if (["staleDataSources", "degradedDataSources", "collectingDataSources", "openDataSourceIncidents"].some((key) => !Array.isArray(merged[key]) || merged[key].includes("secret-value"))) {
+          assert.ok(report.failures.includes("DATA_SOURCE_LIST_INVALID"));
+        }
         if (patch?.staleDataSources) assert.deepEqual(report.snapshot.staleDataSources, ["ethereum-rpc"]);
       }
     } finally {
