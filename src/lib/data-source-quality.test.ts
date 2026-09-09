@@ -310,4 +310,15 @@ describe("data source quality", () => {
       .toMatchObject({ observationCount: 1, averageCoveragePercent: 50 });
   });
 
+  it("marks old successful observations stale and clears freshness after a new scan", () => {
+    const last = Date.parse("2026-09-09T12:00:00Z");
+    const records = Array.from({ length: 12 }, (_, index) => historyRecord(last - index * 5 * 60_000));
+    const select = (now: number) => calculateDataSourceQualityHistory(records, now).find((item) => item.source === "ethereum-rpc");
+    expect(select(last + 900_000)).toMatchObject({ status: "healthy", observationAgeSeconds: 900 });
+    expect(select(last + 901_000)).toMatchObject({ status: "stale", availabilityPercent: 100, lastObservedAt: new Date(last).toISOString(), observationAgeSeconds: 901 });
+    expect(calculateDataSourceQualityHistory([], last)[0]).toMatchObject({ status: "collecting", lastObservedAt: null, observationAgeSeconds: null });
+    records.push(historyRecord(last + 1_200_000));
+    expect(select(last + 1_200_000)).toMatchObject({ status: "healthy", observationAgeSeconds: 0 });
+  });
+
 });

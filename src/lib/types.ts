@@ -286,7 +286,9 @@ export interface PaperDecisionDataQuality {
 
 export interface DataSourceQualityHistoryItem {
   source: DataSourceId;
-  status: "collecting" | "healthy" | "degraded";
+  status: "collecting" | "healthy" | "degraded" | "stale";
+  lastObservedAt: string | null;
+  observationAgeSeconds: number | null;
   observationCount: number;
   minimumObservations: 12;
   availabilityPercent: number;

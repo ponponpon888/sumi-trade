@@ -96,6 +96,7 @@ const dataSourceHistoryStatusLabels = {
   collecting: "COLLECTING",
   healthy: "STABLE",
   degraded: "DEGRADED",
+  stale: "STALE OBSERVATIONS",
 } as const;
 
 const dataSourceIncidentStatusLabels = {
@@ -170,6 +171,8 @@ function DataSourceQualityBoard({
                 <div className={`data-source-history data-source-history-${historical.status}`}>
                   <span>HISTORY 24H · {dataSourceHistoryStatusLabels[historical.status]}</span>
                   <small>AVAILABLE {historical.availabilityPercent.toFixed(1)}% · AVG COVERAGE {historical.averageCoveragePercent.toFixed(1)}%</small>
+                  <small>{historical.lastObservedAt ? `LAST OBS ${historical.lastObservedAt}` : "NO OBSERVATIONS"}</small>
+                  <small>{historical.observationAgeSeconds === null ? "OBSERVATION AGE N/A" : `OBSERVATION AGE ${Math.floor(historical.observationAgeSeconds / 60)} MIN`}</small>
                   <small>OBS {historical.observationCount}/{historical.minimumObservations} MIN · FAIL STREAK {historical.currentFailureStreak}</small>
                 </div>
               ) : null}
@@ -1663,7 +1666,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-        <span>SUMI TRADE LAB / BUILD 1.27.4</span>
+        <span>SUMI TRADE LAB / BUILD 1.28</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

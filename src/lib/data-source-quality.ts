@@ -186,6 +186,9 @@ export function calculateDataSourceQualityHistory(
 
   return DATA_SOURCE_IDS.map((source) => {
     const sourceObservations = uniqueSourceObservations(observations, source);
+    const lastObservedMs = sourceObservations.at(-1)?.bucketTimeMs;
+    const lastObservedAt = lastObservedMs === undefined ? null : new Date(lastObservedMs).toISOString();
+    const observationAgeSeconds = lastObservedMs === undefined ? null : Math.max(0, (nowMs - lastObservedMs) / 1_000);
     const observationCount = sourceObservations.length;
     const availableCount = sourceObservations.filter(
       (item) => item.status !== "unavailable",
@@ -202,7 +205,9 @@ export function calculateDataSourceQualityHistory(
       )
       : 0;
     const currentFailureStreak = trailingConsecutiveCount(sourceObservations, "unavailable");
-    const status = observationCount < DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS
+    const status = observationAgeSeconds !== null && observationAgeSeconds > 15 * 60
+      ? "stale"
+      : observationCount < DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS
       ? "collecting"
       : availabilityPercent >= 95 &&
           averageCoveragePercent >= 90 &&
@@ -214,6 +219,8 @@ export function calculateDataSourceQualityHistory(
       source,
       status,
       observationCount,
+      lastObservedAt,
+      observationAgeSeconds,
       minimumObservations: DATA_SOURCE_HISTORY_MINIMUM_OBSERVATIONS,
       availabilityPercent,
       averageCoveragePercent,

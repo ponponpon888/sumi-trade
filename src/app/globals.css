@@ -509,6 +509,7 @@ a {
 }
 
 .data-source-history-healthy span { color: var(--lime); }
+.data-source-history-stale span,
 .data-source-history-degraded span { color: var(--red); }
 
 .data-source-incident {

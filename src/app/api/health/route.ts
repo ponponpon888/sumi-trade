@@ -43,7 +43,7 @@ export async function GET() {
     {
       ok: true,
       service: "sumi-trade-lab",
-      buildVersion: "1.27.4",
+      buildVersion: "1.28.0",
       mode: "paper",
       executionLocked: true,
       configurationStatus: runtimeConfiguration.status,
@@ -60,6 +60,9 @@ export async function GET() {
         journal?.operationalReadiness.scanCoverage24hPercent ?? 0,
       dataSourceIncidentStatus,
       openDataSourceIncidents,
+      staleDataSources: journal?.dataSourceQualityHistory24h
+        .filter((item) => item.status === "stale")
+        .map((item) => item.source) ?? [],
       checkedAt: new Date(nowMs).toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } },
