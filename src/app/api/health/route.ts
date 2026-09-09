@@ -33,11 +33,23 @@ export async function GET() {
         (incident) => incident.status === "recovered",
       )
       ? "recovered"
-      : journal?.dataSourceIncidents24h.every(
+      : journal?.dataSourceIncidents24h.length && journal.dataSourceIncidents24h.every(
           (incident) => incident.status === "monitoring",
         )
         ? "monitoring"
         : "collecting";
+
+  const sourceHistory = journal?.dataSourceQualityHistory24h ?? [];
+  const staleDataSources = sourceHistory.filter((item) => item.status === "stale").map((item) => item.source);
+  const degradedDataSources = sourceHistory.filter((item) => item.status === "degraded").map((item) => item.source);
+  const collectingDataSources = sourceHistory.filter((item) => item.status === "collecting").map((item) => item.source);
+  const dataSourceQualityStatus = staleDataSources.length > 0
+    ? "stale"
+    : degradedDataSources.length > 0
+      ? "degraded"
+      : sourceHistory.length === 0 || collectingDataSources.length > 0
+        ? "collecting"
+        : "healthy";
 
   return Response.json(
     {
@@ -60,9 +72,10 @@ export async function GET() {
         journal?.operationalReadiness.scanCoverage24hPercent ?? 0,
       dataSourceIncidentStatus,
       openDataSourceIncidents,
-      staleDataSources: journal?.dataSourceQualityHistory24h
-        .filter((item) => item.status === "stale")
-        .map((item) => item.source) ?? [],
+      dataSourceQualityStatus,
+      staleDataSources,
+      degradedDataSources,
+      collectingDataSources,
       checkedAt: new Date(nowMs).toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } },

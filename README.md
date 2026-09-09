@@ -364,3 +364,7 @@ KyberSwap Aggregator APIのルート照会にはAPIキーを保存せず、公�
 ### Source freshness across the statistics window
 
 Source freshness uses the latest retained observation at or before the evaluation time, even when older than 24 hours. Availability, coverage, observation counts and failure streaks still use only the 24-hour window. A stopped source therefore remains stale while its last observation is retained; a source with no retained observation remains collecting. Future observations are ignored.
+
+### Health API source quality summary
+
+`/api/health` exposes `dataSourceQualityStatus` with precedence `stale`, `degraded`, `collecting`, then `healthy`. Separate `staleDataSources`, `degradedDataSources` and `collectingDataSources` arrays retain all affected source IDs. Missing history is collecting; an empty incident history is also collecting rather than monitoring. These fields describe observed source quality and do not change the service liveness response or execution lock.
