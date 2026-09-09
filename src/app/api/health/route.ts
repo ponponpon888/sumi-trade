@@ -24,12 +24,38 @@ export async function GET() {
         cadenceMinutes: 5,
       })
     : "error";
+  const openDataSourceIncidents = journal?.dataSourceIncidents24h
+    .filter((incident) => incident.status === "incident")
+    .map((incident) => incident.source) ?? [];
+  const dataSourceIncidentStatus = openDataSourceIncidents.length > 0
+    ? "incident"
+    : journal?.dataSourceIncidents24h.some(
+        (incident) => incident.status === "recovered",
+      )
+      ? "recovered"
+      : journal?.dataSourceIncidents24h.length && journal.dataSourceIncidents24h.every(
+          (incident) => incident.status === "monitoring",
+        )
+        ? "monitoring"
+        : "collecting";
+
+  const sourceHistory = journal?.dataSourceQualityHistory24h ?? [];
+  const staleDataSources = sourceHistory.filter((item) => item.status === "stale").map((item) => item.source);
+  const degradedDataSources = sourceHistory.filter((item) => item.status === "degraded").map((item) => item.source);
+  const collectingDataSources = sourceHistory.filter((item) => item.status === "collecting").map((item) => item.source);
+  const dataSourceQualityStatus = staleDataSources.length > 0
+    ? "stale"
+    : degradedDataSources.length > 0
+      ? "degraded"
+      : sourceHistory.length === 0 || collectingDataSources.length > 0
+        ? "collecting"
+        : "healthy";
 
   return Response.json(
     {
       ok: true,
       service: "sumi-trade-lab",
-      buildVersion: "1.17.0",
+      buildVersion: "1.28.0",
       mode: "paper",
       executionLocked: true,
       configurationStatus: runtimeConfiguration.status,
@@ -44,6 +70,12 @@ export async function GET() {
       observationHours: journal?.operationalReadiness.observationHours ?? 0,
       scanCoverage24hPercent:
         journal?.operationalReadiness.scanCoverage24hPercent ?? 0,
+      dataSourceIncidentStatus,
+      openDataSourceIncidents,
+      dataSourceQualityStatus,
+      staleDataSources,
+      degradedDataSources,
+      collectingDataSources,
       checkedAt: new Date(nowMs).toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } },

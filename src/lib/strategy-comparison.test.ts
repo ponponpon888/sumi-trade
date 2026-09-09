@@ -30,6 +30,7 @@ describe("strategy comparison", () => {
     expect(result.candleCount).toBe(259);
     expect(result.leaderId).toBeNull();
     expect(result.results).toEqual([]);
+    expect(result.walkForwardByRegime).toEqual([]);
     expect(result.researchOnly).toBe(true);
   });
 
@@ -55,6 +56,52 @@ describe("strategy comparison", () => {
       ),
     ).toBe(true);
     expect(result.leaderId).toBe(result.results[0]?.id);
+    expect(
+      result.walkForwardByRegime.reduce(
+        (total, regime) => total + regime.windowCount,
+        0,
+      ),
+    ).toBe(3);
+    expect(
+      result.walkForwardByRegime.every(
+        (regime) =>
+          regime.researchOnly &&
+          regime.results.length === 3 &&
+          regime.leaderId === regime.results[0]?.id &&
+          regime.results.every(
+            (strategy) => strategy.windowCount === regime.windowCount,
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  it("attributes each test window using only its starting history", () => {
+    const candles = comparisonSeries(480);
+    const futureShock = candles.map((candle, index) =>
+      index < 360
+        ? candle
+        : {
+            ...candle,
+            open: candle.open * (1 + (index - 359) * 0.01),
+            high: candle.high * (1 + (index - 359) * 0.01),
+            low: candle.low * (1 + (index - 359) * 0.01),
+            close: candle.close * (1 + (index - 359) * 0.01),
+          },
+    );
+    const result = compareStrategies(candles);
+    const shockedResult = compareStrategies(futureShock);
+
+    expect(result.walkForwardByRegime).toHaveLength(1);
+    expect(result.walkForwardByRegime[0]).toMatchObject({
+      windowCount: 1,
+      researchOnly: true,
+    });
+    expect(shockedResult.walkForwardByRegime[0]?.regime).toBe(
+      result.walkForwardByRegime[0]?.regime,
+    );
+    expect(result.notes).toContain(
+      "各10時間テスト窓を開始時点までの情報で局面分類",
+    );
   });
 
   it("is deterministic for identical candles", () => {

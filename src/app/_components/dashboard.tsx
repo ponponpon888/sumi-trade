@@ -5,6 +5,9 @@ import { formatAmount, formatUsd } from "@/lib/number";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  DataSourceIncidentItem,
+  DataSourceQualityHistoryItem,
+  DataSourceQualitySnapshot,
   ModelDriftAssessment,
   ModelDriftSnapshot,
   PaperConfidenceCalibration,
@@ -74,6 +77,122 @@ const onchainPreflightLabels = {
   blocked: "CHAIN BLOCK",
   unavailable: "CHAIN WAIT",
 } as const;
+
+const dataSourceLabels = {
+  blockscout: "BLOCKSCOUT",
+  dexscreener: "DEXSCREENER",
+  geckoterminal: "GECKOTERMINAL",
+  "ethereum-rpc": "ETHEREUM RPC",
+  kyberswap: "KYBERSWAP",
+} as const;
+
+const dataSourceStatusLabels = {
+  healthy: "HEALTHY",
+  degraded: "PARTIAL",
+  unavailable: "NO SAMPLE",
+} as const;
+
+const dataSourceHistoryStatusLabels = {
+  collecting: "COLLECTING",
+  healthy: "STABLE",
+  degraded: "DEGRADED",
+  stale: "STALE OBSERVATIONS",
+} as const;
+
+const dataSourceIncidentStatusLabels = {
+  collecting: "WATCH COLLECTING",
+  monitoring: "NO INCIDENT",
+  incident: "INCIDENT OPEN",
+  recovered: "RECOVERED",
+} as const;
+
+const decisionDataQualityLabels = {
+  complete: "COMPLETE",
+  partial: "PARTIAL",
+  unavailable: "UNAVAILABLE",
+  unknown: "LEGACY / UNKNOWN",
+} as const;
+
+const sourceQualityImpactStatusLabels = {
+  collecting: "COLLECTING",
+  monitoring: "MONITORING",
+  "performance-alert": "PERFORMANCE ALERT",
+} as const;
+
+const sourceReasonImpactStatusLabels = {
+  collecting: "COLLECTING",
+  monitoring: "MONITORING",
+  "performance-alert": "REASON ALERT",
+} as const;
+
+function DataSourceQualityBoard({
+  quality,
+  history,
+  incidents,
+}: {
+  quality: DataSourceQualitySnapshot;
+  history: DataSourceQualityHistoryItem[];
+  incidents: DataSourceIncidentItem[];
+}) {
+  const historyBySource = new Map(history.map((item) => [item.source, item]));
+  const incidentsBySource = new Map(
+    incidents.map((item) => [item.source, item]),
+  );
+  return (
+    <section
+      className={`data-source-board data-source-${quality.status} shell`}
+      aria-labelledby="data-source-title"
+    >
+      <div className="data-source-heading">
+        <div>
+          <span className="section-index">DATA SOURCE QUALITY</span>
+          <h2 id="data-source-title">判断の前に、データの穴を見る。</h2>
+          <p>各取得元の今回スキャン対象・成功数・欠損率を表示します。品質表示は読み取り専用で、既存のFail Closed判定を緩めません。</p>
+        </div>
+        <span className={`data-source-overall data-source-overall-${quality.status}`}>
+          {quality.status === "healthy" ? "ALL HEALTHY" : "SOURCE WATCH"}
+        </span>
+      </div>
+      <div className="data-source-grid">
+        {quality.sources.map((source) => {
+          const historical = historyBySource.get(source.source);
+          const incident = incidentsBySource.get(source.source);
+          return (
+            <article className={`data-source-card data-source-card-${source.status}`} key={source.source}>
+              <div>
+                <span>{dataSourceLabels[source.source]}</span>
+                <b>{dataSourceStatusLabels[source.status]}</b>
+              </div>
+              <strong>{source.coveragePercent.toFixed(1)}%</strong>
+              <small>{source.successfulCount}/{source.observedCount} COMPLETE · MISSING {(100 - source.coveragePercent).toFixed(1)}%</small>
+              <small>{source.dataAgeSeconds === null ? "SOURCE AGE N/A" : `MAX AGE ${source.dataAgeSeconds.toFixed(0)}S`}</small>
+              <p>{source.reasons[0]}</p>
+              {historical ? (
+                <div className={`data-source-history data-source-history-${historical.status}`}>
+                  <span>HISTORY 24H · {dataSourceHistoryStatusLabels[historical.status]}</span>
+                  <small>AVAILABLE {historical.availabilityPercent.toFixed(1)}% · AVG COVERAGE {historical.averageCoveragePercent.toFixed(1)}%</small>
+                  <small>{historical.lastObservedAt ? `LAST OBS ${historical.lastObservedAt}` : "NO OBSERVATIONS"}</small>
+                  <small>{historical.observationAgeSeconds === null ? "OBSERVATION AGE N/A" : `OBSERVATION AGE ${Math.floor(historical.observationAgeSeconds / 60)} MIN`}</small>
+                  <small>OBS {historical.observationCount}/{historical.minimumObservations} MIN · FAIL STREAK {historical.currentFailureStreak}</small>
+                </div>
+              ) : null}
+              {incident ? (
+                <div className={`data-source-incident data-source-incident-${incident.status}`}>
+                  <span>{dataSourceIncidentStatusLabels[incident.status]}</span>
+                  <small>INCIDENTS 24H {incident.incidentCount24h} · FAIL {incident.currentFailureStreak}/3</small>
+                  <small>{incident.status === "incident" ? `RECOVERY ${incident.currentRecoveryStreak}/3 HEALTHY` : incident.latestRecoveredAt ? `RECOVERED ${new Date(incident.latestRecoveredAt).toISOString()}` : "3 CONSECUTIVE FAILURES TO OPEN"}</small>
+                  {incident.latestIncidentStartedAt ? (
+                    <small>LAST OPEN {new Date(incident.latestIncidentStartedAt).toISOString()}</small>
+                  ) : null}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
@@ -438,6 +557,20 @@ function ChartModelBoard({ chartModel }: { chartModel: ChartModelSnapshot }) {
   );
 }
 
+const strategyComparisonShortLabels = {
+  "sumi-regime": "SUMI",
+  "ema-trend": "EMA",
+  "rsi-reversion": "RSI",
+} as const;
+
+const strategyComparisonRegimeLabels = {
+  uptrend: "UPTREND",
+  downtrend: "DOWNTREND",
+  range: "RANGE",
+  "high-volatility": "HIGH VOL",
+  "low-liquidity": "LOW LIQ",
+} as const;
+
 function StrategyComparisonBoard({ chartModel }: { chartModel: ChartModelSnapshot }) {
   const comparable = chartModel.analyses.filter(
     (analysis) => analysis.strategyComparison.status === "ready",
@@ -486,6 +619,40 @@ function StrategyComparisonBoard({ chartModel }: { chartModel: ChartModelSnapsho
                       <strong>{result.profitFactor === null ? "—" : result.profitFactor.toFixed(2)}</strong>
                     </div>
                   ))}
+                </div>
+                <div className="strategy-regime-walkforward">
+                  <div className="strategy-regime-title">
+                    <strong>REGIME WALK-FORWARD</strong>
+                    <small>10H TEST WINDOWS · START-ONLY CLASSIFICATION</small>
+                  </div>
+                  {comparison.walkForwardByRegime.length > 0 ? (
+                    comparison.walkForwardByRegime.map((regime) => (
+                      <article key={regime.regime}>
+                        <div className="strategy-regime-head">
+                          <div>
+                            <strong>{strategyComparisonRegimeLabels[regime.regime]}</strong>
+                            <small>{regime.windowCount} WINDOWS</small>
+                          </div>
+                          <b>
+                            LEADER {regime.leaderId ? strategyComparisonShortLabels[regime.leaderId] : "—"}
+                          </b>
+                        </div>
+                        <div className="strategy-regime-results">
+                          {regime.results.map((result) => (
+                            <div className={result.id === regime.leaderId ? "is-leader" : ""} key={result.id}>
+                              <span>#{result.rank} {strategyComparisonShortLabels[result.id]}</span>
+                              <strong className={result.netReturnPercent >= 0 ? "positive" : "negative"}>
+                                {signedPercent(result.netReturnPercent)}
+                              </strong>
+                              <small>{result.tradeCount} TRADES · {result.profitableWindowRate.toFixed(0)}% WIN WINDOWS</small>
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    ))
+                  ) : (
+                    <p>360本の学習区間と120本のテスト区間を収集中です。</p>
+                  )}
                 </div>
                 <p>{comparison.notes.join(" · ")}</p>
               </article>
@@ -831,6 +998,77 @@ function PerformanceLens({ journal }: { journal: PaperJournalSnapshot }) {
         ))}
       </div>
 
+      <section className="data-quality-performance" aria-label="判断時データ品質別の30日成績">
+        <div className="performance-card-heading">
+          <div><span>ENTRY DATA QUALITY</span><strong>判断時のデータ品質別成績</strong></div>
+          <small>30D · CHART MODEL · RESEARCH ONLY</small>
+        </div>
+        <div className="data-quality-performance-grid">
+          {journal.dataQualityPerformance.map((performance) => (
+            <article key={performance.band} className={`data-quality-band-${performance.band}`}>
+              <div>
+                <span>{decisionDataQualityLabels[performance.band]}</span>
+                <small>{performance.status.toUpperCase()}</small>
+              </div>
+              <strong className={performance.netPnlUsd > 0 ? "positive" : performance.netPnlUsd < 0 ? "negative" : "muted"}>
+                {performance.maturedCount ? `${performance.netPnlUsd > 0 ? "+" : ""}${formatUsd(performance.netPnlUsd)}` : "—"}
+              </strong>
+              <small>{performance.maturedCount}/{performance.minimumSamples} SAMPLES · WIN {performance.maturedCount ? `${performance.winRate.toFixed(1)}%` : "—"}</small>
+              <small>AVG NET {performance.maturedCount ? signedPercent(performance.averageNetReturnPercent) : "—"}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="source-quality-impact" aria-label="取得元別の品質影響分析">
+        <div className="performance-card-heading">
+          <div><span>SOURCE IMPACT</span><strong>欠損時と正常時の成績差</strong></div>
+          <small>30D · MIN 10 + 10 · RESEARCH ONLY</small>
+        </div>
+        <div className="source-quality-impact-grid">
+          {journal.sourceQualityImpact.map((impact) => (
+            <article key={impact.source} className={`source-impact-${impact.status}`}>
+              <div>
+                <span>{dataSourceLabels[impact.source]}</span>
+                <small>{sourceQualityImpactStatusLabels[impact.status]}</small>
+              </div>
+              <strong className={impact.status === "performance-alert" ? "negative" : ""}>
+                {impact.cleanCount && impact.impairedCount ? signedPercent(impact.returnGapPercentagePoints) : "—"}
+              </strong>
+              <small>RETURN GAP · IMPAIRED − CLEAN</small>
+              <dl>
+                <div><dt>CLEAN</dt><dd>{impact.cleanCount}/{impact.minimumSamples} · {impact.cleanCount ? signedPercent(impact.cleanAverageNetReturnPercent) : "—"}</dd></div>
+                <div><dt>IMPAIRED</dt><dd>{impact.impairedCount}/{impact.minimumSamples} · {impact.impairedCount ? signedPercent(impact.impairedAverageNetReturnPercent) : "—"}</dd></div>
+              </dl>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="source-reason-impact" aria-label="取得元劣化時の判断理由別影響分析">
+        <div className="performance-card-heading">
+          <div><span>REASON ATTRIBUTION</span><strong>劣化の影響を受けた判断理由</strong></div>
+          <small>30D · SAME REASON · MIN 5 + 5 · RESEARCH ONLY</small>
+        </div>
+        <div className="source-reason-impact-grid">
+          {journal.sourceReasonImpact.map((impact) => (
+            <article key={impact.source} className={`source-reason-${impact.status}`}>
+              <div>
+                <span>{dataSourceLabels[impact.source]}</span>
+                <small>{sourceReasonImpactStatusLabels[impact.status]}</small>
+              </div>
+              <strong>{impact.reason ?? "判断理由を収集中"}</strong>
+              <p className={impact.status === "performance-alert" ? "negative" : "muted"}>
+                {impact.cleanCount && impact.impairedCount
+                  ? `${signedPercent(impact.returnGapPercentagePoints)} RETURN GAP`
+                  : "比較データ待ち"}
+              </p>
+              <small>CLEAN {impact.cleanCount}/{impact.minimumSamples} · IMPAIRED {impact.impairedCount}/{impact.minimumSamples}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <div className="performance-detail-grid">
         <PerformanceCurve journal={journal} />
         <article className="asset-performance-card">
@@ -891,6 +1129,17 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
           {journalStatusLabels[journal.status]}
         </span>
       </div>
+
+      <nav className="research-export-links" aria-label="紙上分析データのダウンロード">
+        <span>RESEARCH EXPORT</span>
+        <a href="/api/paper/export">OUTCOMES CSV</a>
+        <a href="/api/paper/export?dataset=confidence&amp;format=csv">CONFIDENCE CSV</a>
+        <a href="/api/paper/export?dataset=regimes&amp;format=csv">REGIMES CSV</a>
+        <a href="/api/paper/export?dataset=data-quality&amp;format=csv">DATA QUALITY CSV</a>
+        <a href="/api/paper/export?dataset=source-impact&amp;format=csv">SOURCE IMPACT CSV</a>
+        <a href="/api/paper/export?dataset=source-reasons&amp;format=csv">SOURCE REASONS CSV</a>
+        <a href="/api/paper/export?dataset=research&amp;format=json">RESEARCH JSON</a>
+      </nav>
 
       <div className="journal-progress" aria-label={`採点済み ${journal.maturedCount} / ${journal.qualification.minimumSamples}`}>
         <div>
@@ -981,14 +1230,47 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
             <small>{journal.scanCount} SCANS / {journal.pendingCount} PENDING</small>
           </div>
           {journal.recentOutcomes.length ? (
-            <div className="outcome-list">
+            <div className="outcome-list outcome-audit-list">
               {journal.recentOutcomes.map((outcome) => (
-                <div key={`${outcome.symbol}-${outcome.signalTime}`}>
-                  <span className={`signal signal-${outcome.direction.toLowerCase()}`}>{outcome.direction}</span>
-                  <strong>{outcome.symbol}</strong>
-                  <span>{outcome.netReturnPercent >= 0 ? "+" : ""}{outcome.netReturnPercent.toFixed(2)}%</span>
-                  <strong className={outcome.won ? "positive" : "negative"}>{outcome.netPnlUsd >= 0 ? "+" : ""}{formatUsd(outcome.netPnlUsd)}</strong>
-                </div>
+                <article key={outcome.decisionId ?? `${outcome.symbol}-${outcome.signalTime}`}>
+                  <div className="outcome-audit-summary">
+                    <span className={`signal signal-${outcome.direction.toLowerCase()}`}>{outcome.direction}</span>
+                    <div>
+                      <strong>{outcome.symbol}</strong>
+                      <small>{outcome.model === "community-trend" ? "COMMUNITY TREND" : "CORE CHART"}</small>
+                    </div>
+                    <span>{outcome.netReturnPercent >= 0 ? "+" : ""}{outcome.netReturnPercent.toFixed(2)}%</span>
+                    <strong className={outcome.won ? "positive" : "negative"}>{outcome.netPnlUsd >= 0 ? "+" : ""}{formatUsd(outcome.netPnlUsd)}</strong>
+                  </div>
+                  <dl className="outcome-audit-metrics">
+                    <div><dt>SCORE</dt><dd>{outcome.modelScore.toFixed(0)}</dd></div>
+                    <div><dt>CONF.</dt><dd>{outcome.confidence.toFixed(0)}</dd></div>
+                    <div><dt>ENTRY</dt><dd>{formatUsd(outcome.entryPriceUsd)}</dd></div>
+                    <div><dt>6H EXIT</dt><dd>{formatUsd(outcome.exitPriceUsd)}</dd></div>
+                    <div><dt>COST</dt><dd>{formatUsd(outcome.estimatedCostUsd)}</dd></div>
+                  </dl>
+                  <div className="outcome-audit-reasons">
+                    <span>DECISION REASONS</span>
+                    {outcome.decisionReasons?.length ? (
+                      <ul>{outcome.decisionReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                    ) : (
+                      <small>旧レコードのため判断理由は保存されていません。</small>
+                    )}
+                  </div>
+                  <div className={`outcome-data-quality outcome-data-quality-${outcome.entryDataQuality?.status ?? "unknown"}`}>
+                    <span>ENTRY DATA · {decisionDataQualityLabels[outcome.entryDataQuality?.status ?? "unknown"]}</span>
+                    {outcome.entryDataQuality ? (
+                      <small>
+                        AVG COVERAGE {outcome.entryDataQuality.averageCoveragePercent.toFixed(1)}%
+                        {outcome.entryDataQuality.unavailableSources.length ? ` · NO SAMPLE ${outcome.entryDataQuality.unavailableSources.join(" / ")}` : ""}
+                        {outcome.entryDataQuality.degradedSources.length ? ` · PARTIAL ${outcome.entryDataQuality.degradedSources.join(" / ")}` : ""}
+                      </small>
+                    ) : (
+                      <small>旧レコードのため判断時の取得元品質は保存されていません。</small>
+                    )}
+                  </div>
+                  <small className="outcome-audit-id">{outcome.decisionId ?? "LEGACY DECISION"} · {new Date(outcome.signalTime).toISOString()}</small>
+                </article>
               ))}
             </div>
           ) : (
@@ -1191,6 +1473,7 @@ export function Dashboard({
   journal,
   trendScout,
   safetyControl,
+  dataSourceQuality,
 }: {
   snapshot: PortfolioSnapshot;
   chartModel: ChartModelSnapshot;
@@ -1198,6 +1481,7 @@ export function Dashboard({
   journal: PaperJournalSnapshot;
   trendScout: TrendScoutSnapshot;
   safetyControl: SafetyControlSnapshot;
+  dataSourceQuality: DataSourceQualitySnapshot;
 }) {
   const signals = new Map(plan.signals.map((signal) => [signal.symbol, signal]));
   const actionableSignals = plan.signals.filter((signal) =>
@@ -1279,6 +1563,12 @@ export function Dashboard({
       ) : null}
 
       <OperationalSafetyStrip safety={safetyControl} />
+
+      <DataSourceQualityBoard
+        quality={dataSourceQuality}
+        history={journal.dataSourceQualityHistory24h}
+        incidents={journal.dataSourceIncidents24h}
+      />
 
       <ChartModelBoard chartModel={chartModel} />
 
@@ -1376,7 +1666,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-          <span>SUMI TRADE LAB / BUILD 1.17</span>
+        <span>SUMI TRADE LAB / BUILD 1.28</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

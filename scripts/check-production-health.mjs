@@ -35,6 +35,11 @@ async function saveReport(report) {
   await writeFile(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }
 
+const SOURCE_IDS = new Set(["blockscout", "dexscreener", "geckoterminal", "ethereum-rpc", "kyberswap"]);
+function sourceIds(value) {
+  return Array.isArray(value) ? [...new Set(value.filter((source) => SOURCE_IDS.has(source)))] : [];
+}
+
 function safeSnapshot(health) {
   return {
     buildVersion: health?.buildVersion ?? null,
@@ -45,6 +50,12 @@ function safeSnapshot(health) {
     emergencyStop: health?.emergencyStop ?? null,
     paperEngineStatus: health?.paperEngineStatus ?? null,
     operationalReadiness: health?.operationalReadiness ?? null,
+    dataSourceQualityStatus: ["healthy", "collecting", "degraded", "stale"].includes(health?.dataSourceQualityStatus) ? health.dataSourceQualityStatus : null,
+    dataSourceIncidentStatus: ["monitoring", "collecting", "recovered", "incident"].includes(health?.dataSourceIncidentStatus) ? health.dataSourceIncidentStatus : null,
+    staleDataSources: sourceIds(health?.staleDataSources),
+    degradedDataSources: sourceIds(health?.degradedDataSources),
+    collectingDataSources: sourceIds(health?.collectingDataSources),
+    openDataSourceIncidents: sourceIds(health?.openDataSourceIncidents),
   };
 }
 
@@ -86,6 +97,24 @@ async function main() {
   if (health.paperEngineStatus !== "live") failures.push("PAPER_ENGINE_NOT_LIVE");
 
   const snapshot = safeSnapshot(health);
+  const sourceListKeys = ["staleDataSources", "degradedDataSources", "collectingDataSources", "openDataSourceIncidents"];
+  if (sourceListKeys.some((key) => !Array.isArray(health[key]) || health[key].some((source) => !SOURCE_IDS.has(source)))) {
+    failures.push("DATA_SOURCE_LIST_INVALID");
+  }
+  if (health.dataSourceQualityStatus === "stale" || snapshot.staleDataSources.length > 0) failures.push("DATA_SOURCE_STALE");
+  if (health.dataSourceQualityStatus === "degraded" || snapshot.degradedDataSources.length > 0) failures.push("DATA_SOURCE_DEGRADED");
+  if (!["healthy", "collecting", "degraded", "stale"].includes(health.dataSourceQualityStatus)) {
+    failures.push("DATA_SOURCE_QUALITY_STATUS_INVALID");
+  }
+  if (health.dataSourceIncidentStatus === "incident" || snapshot.openDataSourceIncidents.length > 0) failures.push("DATA_SOURCE_INCIDENT");
+  if (!["monitoring", "collecting", "recovered", "incident"].includes(health.dataSourceIncidentStatus)) {
+    failures.push("DATA_SOURCE_INCIDENT_STATUS_INVALID");
+  }
+  const warnings = [];
+  if (health.dataSourceQualityStatus === "collecting" || health.dataSourceIncidentStatus === "collecting" || snapshot.collectingDataSources.length > 0) {
+    warnings.push("DATA_SOURCE_COLLECTING");
+  }
+
   const report = {
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
@@ -93,6 +122,7 @@ async function main() {
     expectedVersion,
     status: failures.length === 0 ? "pass" : "blocked",
     failures,
+    warnings,
     configurationIssues: configurationIssues(health),
     snapshot,
   };
@@ -104,7 +134,7 @@ async function main() {
     return;
   }
 
-  console.log("Production health passed", snapshot);
+  console.log("Production health passed", { ...snapshot, warnings });
 }
 
 try {
@@ -118,6 +148,7 @@ try {
     expectedVersion,
     status: "unavailable",
     failures: ["HEALTH_CHECK_UNAVAILABLE"],
+    warnings: [],
     configurationIssues: [],
     error: message,
     snapshot: safeSnapshot(null),

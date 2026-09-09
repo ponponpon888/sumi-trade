@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { compareStrategies } from "@/lib/chart-model";
 import {
   calculateOperationalReadiness,
+  calculateSourceQualityImpact,
+  calculateSourceReasonImpact,
   collectPaperTradeOutcomes,
   createPaperScanRecord,
   evaluatePaperJournal,
@@ -15,6 +17,7 @@ import type {
   PaperQualification,
   PortfolioSnapshot,
   StrategyPlan,
+  PaperTradeOutcome,
 } from "@/lib/types";
 
 const WALLET = "0x0000000000000000000000000000000000000001";
@@ -255,6 +258,40 @@ function recordAt(
   return direction ? record : { ...record, signals: [] };
 }
 
+function qualityOutcome(
+  index: number,
+  netReturnPercent: number,
+  geckoImpaired: boolean,
+): PaperTradeOutcome {
+  return {
+    decisionId: `quality-${index}`,
+    model: "chart",
+    priceKey: "TEST",
+    symbol: "TEST",
+    direction: "BUY",
+    entryPriceUsd: 100,
+    modelScore: 70,
+    confidence: 70,
+    decisionReasons: ["EMA alignment"],
+    notionalUsd: 100,
+    estimatedCostUsd: 1,
+    costGatePassed: true,
+    signalTime: new Date(Date.UTC(2026, 8, 7, index)).toISOString(),
+    outcomeTime: new Date(Date.UTC(2026, 8, 7, index + 6)).toISOString(),
+    exitPriceUsd: 100 + netReturnPercent,
+    grossReturnPercent: netReturnPercent + 1,
+    netReturnPercent,
+    netPnlUsd: netReturnPercent,
+    won: netReturnPercent > 0,
+    entryDataQuality: {
+      status: geckoImpaired ? "unavailable" : "complete",
+      averageCoveragePercent: geckoImpaired ? 80 : 100,
+      degradedSources: [],
+      unavailableSources: geckoImpaired ? ["geckoterminal"] : [],
+    },
+  };
+}
+
 describe("paper journal", () => {
   it("creates an execution-locked, five-minute idempotency bucket", () => {
     const first = createPaperScanRecord(data(100, "BUY"), Date.UTC(2026, 8, 7, 0, 1));
@@ -266,6 +303,7 @@ describe("paper journal", () => {
       decisionId: `${first.id}:chart:TEST:BUY`,
       direction: "BUY",
       marketRegime: "uptrend",
+      decisionReasons: ["test"],
       notionalUsd: 200,
     });
   });
@@ -280,6 +318,16 @@ describe("paper journal", () => {
     expect(result.winRate).toBe(100);
     expect(result.netPnlUsd).toBe(18);
     expect(result.executionLocked).toBe(true);
+    expect(result.recentOutcomes[0].entryDataQuality).toMatchObject({
+      status: "unavailable",
+      averageCoveragePercent: 40,
+      unavailableSources: ["dexscreener", "ethereum-rpc", "kyberswap"],
+    });
+    expect(
+      result.dataQualityPerformance.find(
+        (performance) => performance.band === "unavailable",
+      ),
+    ).toMatchObject({ maturedCount: 1, netPnlUsd: 18 });
   });
 
   it("collects settled outcomes for the 30-day audit export", () => {
@@ -515,6 +563,11 @@ describe("paper journal", () => {
       maturedCount: 1,
       netPnlUsd: -12,
     });
+    expect(
+      result.dataQualityPerformance.find(
+        (performance) => performance.band === "unknown",
+      ),
+    ).toMatchObject({ maturedCount: 1, netPnlUsd: 18 });
   });
 
   it("keeps the seven-day promotion window while comparing 24h, 7d, and 30d", () => {
@@ -601,6 +654,61 @@ describe("paper journal", () => {
     expect(result.longestLossStreak).toBe(3);
     expect(result.currentLossStreak).toBe(0);
     expect(result.modelPerformance.chart.currentLossStreak).toBe(0);
+  });
+
+  it("attributes a material return gap to the impaired source only after 10 + 10 samples", () => {
+    const clean = Array.from({ length: 10 }, (_, index) =>
+      qualityOutcome(index, 1.5, false),
+    );
+    const impaired = Array.from({ length: 10 }, (_, index) =>
+      qualityOutcome(index + 10, -1.5, true),
+    );
+    const legacy = { ...qualityOutcome(21, -20, true), entryDataQuality: undefined };
+    const impact = calculateSourceQualityImpact([
+      ...clean,
+      ...impaired,
+      legacy,
+    ]);
+
+    expect(impact.find((item) => item.source === "geckoterminal")).toMatchObject({
+      status: "performance-alert",
+      cleanCount: 10,
+      impairedCount: 10,
+      cleanAverageNetReturnPercent: 1.5,
+      impairedAverageNetReturnPercent: -1.5,
+      returnGapPercentagePoints: -3,
+      impairedNetPnlUsd: -15,
+    });
+    expect(impact.find((item) => item.source === "blockscout")).toMatchObject({
+      status: "collecting",
+      cleanCount: 20,
+      impairedCount: 0,
+    });
+  });
+
+  it("finds the decision reason most affected by a degraded source", () => {
+    const clean = Array.from({ length: 5 }, (_, index) => ({
+      ...qualityOutcome(index, 2, false),
+      decisionReasons: ["EMA alignment", "Shared context"],
+    }));
+    const impaired = Array.from({ length: 5 }, (_, index) => ({
+      ...qualityOutcome(index + 5, -2, true),
+      decisionReasons: ["EMA alignment", "Shared context"],
+    }));
+    const impact = calculateSourceReasonImpact([...clean, ...impaired]);
+
+    expect(impact.find((item) => item.source === "geckoterminal")).toMatchObject({
+      status: "performance-alert",
+      reason: "EMA alignment",
+      cleanCount: 5,
+      impairedCount: 5,
+      returnGapPercentagePoints: -4,
+      impairedNetPnlUsd: -10,
+    });
+    expect(impact.find((item) => item.source === "blockscout")).toMatchObject({
+      status: "collecting",
+      impairedCount: 0,
+    });
   });
 });
 

@@ -5,6 +5,8 @@ import type {
   PaperConfidenceCalibration,
   PaperConfidenceBandPerformance,
   PaperDriftPerformance,
+  PaperDataQualityPerformance,
+  PaperDecisionDataQuality,
   PaperModelPerformance,
   PaperOperationalReadiness,
   PaperQualification,
@@ -14,11 +16,19 @@ import type {
   PaperScanRecord,
   PaperSignalModel,
   PaperSignalObservation,
+  PaperSourceQualityImpact,
+  PaperSourceReasonImpact,
   PaperTradeOutcome,
   PortfolioSnapshot,
   StrategyPlan,
   TrendScoutSnapshot,
+  DataSourceId,
 } from "@/lib/types";
+import {
+  assessDataSourceQuality,
+  calculateDataSourceIncidents,
+  calculateDataSourceQualityHistory,
+} from "@/lib/data-source-quality";
 
 export const JOURNAL_WINDOW_DAYS = 7 as const;
 export const JOURNAL_ANALYTICS_WINDOW_DAYS = 30 as const;
@@ -42,6 +52,16 @@ const MINIMUM_CALIBRATION_SAMPLES = 10 as const;
 const MINIMUM_REGIME_SAMPLES = 10 as const;
 const REGIME_ALERT_AVERAGE_RETURN_PERCENT = -1 as const;
 const REGIME_ALERT_PROFIT_FACTOR = 0.8 as const;
+const MINIMUM_DATA_QUALITY_SAMPLES = 10 as const;
+const DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS = -1 as const;
+const MINIMUM_REASON_IMPACT_SAMPLES = 5 as const;
+const DATA_SOURCE_IDS: DataSourceId[] = [
+  "blockscout",
+  "dexscreener",
+  "geckoterminal",
+  "ethereum-rpc",
+  "kyberswap",
+];
 
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
@@ -50,6 +70,51 @@ function round(value: number, digits = 2): number {
 
 function finitePositive(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function compactDecisionReasons(...groups: Array<Array<string | undefined>>): string[] {
+  return [...new Set(
+    groups
+      .flat()
+      .map((reason) => reason?.trim())
+      .filter((reason): reason is string => Boolean(reason)),
+  )].slice(0, 5);
+}
+
+function decisionDataQuality(
+  record: PaperScanRecord,
+): PaperDecisionDataQuality | undefined {
+  if (!record.dataSourceQuality?.length) return undefined;
+  const bySource = new Map(
+    record.dataSourceQuality.map((observation) => [
+      observation.source,
+      observation,
+    ]),
+  );
+  const degradedSources: DataSourceId[] = [];
+  const unavailableSources: DataSourceId[] = [];
+  let coverageTotal = 0;
+
+  for (const source of DATA_SOURCE_IDS) {
+    const observation = bySource.get(source);
+    coverageTotal += observation?.coveragePercent ?? 0;
+    if (!observation || observation.status === "unavailable") {
+      unavailableSources.push(source);
+    } else if (observation.status === "degraded") {
+      degradedSources.push(source);
+    }
+  }
+
+  return {
+    status: unavailableSources.length
+      ? "unavailable"
+      : degradedSources.length
+        ? "partial"
+        : "complete",
+    averageCoveragePercent: round(coverageTotal / DATA_SOURCE_IDS.length),
+    degradedSources,
+    unavailableSources,
+  };
 }
 
 export function calculateOperationalReadiness(
@@ -150,6 +215,16 @@ export function createPaperScanRecord(
     data.plan.signals.map((signal) => [signal.symbol, signal]),
   );
   const signals: PaperSignalObservation[] = [];
+  const dataSourceQuality = assessDataSourceQuality(
+    data.snapshot,
+    data.chartModel,
+    nowMs,
+  ).sources.map(({ source, status, coveragePercent, dataAgeSeconds }) => ({
+    source,
+    status,
+    coveragePercent,
+    dataAgeSeconds,
+  }));
 
   for (const analysis of data.chartModel.analyses) {
     if (finitePositive(analysis.lastPrice)) {
@@ -183,6 +258,12 @@ export function createPaperScanRecord(
       modelScore: analysis.score,
       confidence: analysis.confidence,
       marketRegime: analysis.regime?.regime,
+      decisionReasons: compactDecisionReasons(
+        [analysis.summary],
+        analysis.reasons,
+        analysis.regime?.reasons ?? [],
+        [planned?.reason],
+      ),
       notionalUsd: round(Math.max(plannedNotional, modelNotional)),
       estimatedCostUsd: round(analysis.risk.estimatedRoundTripCostUsd),
       costGatePassed: analysis.risk.costGatePassed,
@@ -202,6 +283,9 @@ export function createPaperScanRecord(
   const rotation = data.trendScout?.paperRotation;
   if (rotation && finitePositive(rotation.entryPriceUsd)) {
     const priceKey = rotation.toContractAddress.toLowerCase();
+    const candidate = data.trendScout?.candidates.find(
+      (item) => item.contractAddress.toLowerCase() === priceKey,
+    );
     prices[priceKey] = rotation.entryPriceUsd;
     signals.push({
       decisionId: `${recordId}:community-trend:${priceKey}:BUY`,
@@ -213,6 +297,7 @@ export function createPaperScanRecord(
       entryPriceUsd: rotation.entryPriceUsd,
       modelScore: rotation.score,
       confidence: rotation.score,
+      decisionReasons: compactDecisionReasons(candidate?.reasons ?? []),
       notionalUsd: rotation.amountUsd,
       estimatedCostUsd: rotation.estimatedRoundTripCostUsd,
       costGatePassed: rotation.costGatePassed,
@@ -229,6 +314,7 @@ export function createPaperScanRecord(
     executionLocked: true,
     prices,
     signals,
+    dataSourceQuality,
   };
 }
 
@@ -290,6 +376,7 @@ function settleSignal(
 
   return {
     ...candidate.signal,
+    entryDataQuality: decisionDataQuality(candidate.record),
     signalTime: candidate.record.generatedAt,
     outcomeTime: outcomeRecord.generatedAt,
     exitPriceUsd: exitPrice,
@@ -298,6 +385,210 @@ function settleSignal(
     netPnlUsd: round(netPnlUsd),
     won: netPnlUsd > 0,
   };
+}
+
+export function calculateDataQualityPerformance(
+  outcomes: PaperTradeOutcome[],
+): PaperDataQualityPerformance[] {
+  const bands: PaperDataQualityPerformance["band"][] = [
+    "complete",
+    "partial",
+    "unavailable",
+    "unknown",
+  ];
+
+  return bands.map((band) => {
+    const scoped = outcomes.filter((outcome) =>
+      band === "unknown"
+        ? !outcome.entryDataQuality
+        : outcome.entryDataQuality?.status === band,
+    );
+    const wins = scoped.filter((outcome) => outcome.won).length;
+    return {
+      band,
+      status: scoped.length >= MINIMUM_DATA_QUALITY_SAMPLES
+        ? "monitoring"
+        : "collecting",
+      minimumSamples: MINIMUM_DATA_QUALITY_SAMPLES,
+      maturedCount: scoped.length,
+      winRate: scoped.length ? round((wins / scoped.length) * 100, 1) : 0,
+      netPnlUsd: round(
+        scoped.reduce((total, outcome) => total + outcome.netPnlUsd, 0),
+      ),
+      averageNetReturnPercent: scoped.length
+        ? round(
+          scoped.reduce(
+            (total, outcome) => total + outcome.netReturnPercent,
+            0,
+          ) / scoped.length,
+        )
+        : 0,
+    };
+  });
+}
+
+export function calculateSourceQualityImpact(
+  outcomes: PaperTradeOutcome[],
+): PaperSourceQualityImpact[] {
+  const evidenced = outcomes.filter(
+    (outcome) => outcome.entryDataQuality && signalModel(outcome) === "chart",
+  );
+
+  return DATA_SOURCE_IDS.map((source) => {
+    const impaired = evidenced.filter((outcome) =>
+      outcome.entryDataQuality?.degradedSources.includes(source) ||
+      outcome.entryDataQuality?.unavailableSources.includes(source),
+    );
+    const clean = evidenced.filter((outcome) =>
+      !outcome.entryDataQuality?.degradedSources.includes(source) &&
+      !outcome.entryDataQuality?.unavailableSources.includes(source),
+    );
+    const averageReturn = (scoped: PaperTradeOutcome[]) => scoped.length
+      ? round(
+        scoped.reduce(
+          (total, outcome) => total + outcome.netReturnPercent,
+          0,
+        ) / scoped.length,
+      )
+      : 0;
+    const cleanAverageNetReturnPercent = averageReturn(clean);
+    const impairedAverageNetReturnPercent = averageReturn(impaired);
+    const impairedNetPnlUsd = round(
+      impaired.reduce((total, outcome) => total + outcome.netPnlUsd, 0),
+    );
+    const enoughSamples =
+      clean.length >= MINIMUM_DATA_QUALITY_SAMPLES &&
+      impaired.length >= MINIMUM_DATA_QUALITY_SAMPLES;
+    const returnGapPercentagePoints = round(
+      impairedAverageNetReturnPercent - cleanAverageNetReturnPercent,
+    );
+    const status = !enoughSamples
+      ? "collecting"
+      : impairedNetPnlUsd < 0 &&
+          returnGapPercentagePoints <= DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS
+        ? "performance-alert"
+        : "monitoring";
+
+    return {
+      source,
+      status,
+      minimumSamples: MINIMUM_DATA_QUALITY_SAMPLES,
+      cleanCount: clean.length,
+      impairedCount: impaired.length,
+      cleanAverageNetReturnPercent,
+      impairedAverageNetReturnPercent,
+      returnGapPercentagePoints,
+      impairedNetPnlUsd,
+    };
+  });
+}
+
+export function calculateSourceReasonImpact(
+  outcomes: PaperTradeOutcome[],
+): PaperSourceReasonImpact[] {
+  const evidenced = outcomes.filter(
+    (outcome) =>
+      outcome.entryDataQuality &&
+      signalModel(outcome) === "chart" &&
+      outcome.decisionReasons?.length,
+  );
+  const averageReturn = (scoped: PaperTradeOutcome[]) => scoped.length
+    ? round(
+      scoped.reduce(
+        (total, outcome) => total + outcome.netReturnPercent,
+        0,
+      ) / scoped.length,
+    )
+    : 0;
+
+  return DATA_SOURCE_IDS.map((source) => {
+    const byReason = new Map<
+      string,
+      { clean: PaperTradeOutcome[]; impaired: PaperTradeOutcome[] }
+    >();
+
+    for (const outcome of evidenced) {
+      const impaired =
+        outcome.entryDataQuality!.degradedSources.includes(source) ||
+        outcome.entryDataQuality!.unavailableSources.includes(source);
+      for (const reason of new Set(
+        outcome.decisionReasons!.map((item) => item.trim()).filter(Boolean),
+      )) {
+        const group = byReason.get(reason) ?? { clean: [], impaired: [] };
+        group[impaired ? "impaired" : "clean"].push(outcome);
+        byReason.set(reason, group);
+      }
+    }
+
+    const candidates = [...byReason.entries()].map(([reason, group]) => {
+      const cleanAverageNetReturnPercent = averageReturn(group.clean);
+      const impairedAverageNetReturnPercent = averageReturn(group.impaired);
+      return {
+        reason,
+        cleanCount: group.clean.length,
+        impairedCount: group.impaired.length,
+        cleanAverageNetReturnPercent,
+        impairedAverageNetReturnPercent,
+        returnGapPercentagePoints: round(
+          impairedAverageNetReturnPercent - cleanAverageNetReturnPercent,
+        ),
+        impairedNetPnlUsd: round(
+          group.impaired.reduce(
+            (total, outcome) => total + outcome.netPnlUsd,
+            0,
+          ),
+        ),
+      };
+    });
+    const qualified = candidates.filter(
+      (candidate) =>
+        candidate.cleanCount >= MINIMUM_REASON_IMPACT_SAMPLES &&
+        candidate.impairedCount >= MINIMUM_REASON_IMPACT_SAMPLES,
+    );
+    const selected = (qualified.length ? qualified : candidates).toSorted(
+      (left, right) => {
+        if (qualified.length) {
+          return (
+            left.returnGapPercentagePoints - right.returnGapPercentagePoints ||
+            left.impairedNetPnlUsd - right.impairedNetPnlUsd ||
+            right.impairedCount - left.impairedCount
+          );
+        }
+        return (
+          right.cleanCount + right.impairedCount -
+            (left.cleanCount + left.impairedCount) ||
+          left.reason.localeCompare(right.reason)
+        );
+      },
+    )[0];
+    const enoughSamples = Boolean(
+      selected &&
+      selected.cleanCount >= MINIMUM_REASON_IMPACT_SAMPLES &&
+      selected.impairedCount >= MINIMUM_REASON_IMPACT_SAMPLES,
+    );
+    const status = !enoughSamples
+      ? "collecting"
+      : selected!.impairedNetPnlUsd < 0 &&
+          selected!.returnGapPercentagePoints <=
+            DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS
+        ? "performance-alert"
+        : "monitoring";
+
+    return {
+      source,
+      status,
+      minimumSamples: MINIMUM_REASON_IMPACT_SAMPLES,
+      reason: selected?.reason ?? null,
+      cleanCount: selected?.cleanCount ?? 0,
+      impairedCount: selected?.impairedCount ?? 0,
+      cleanAverageNetReturnPercent:
+        selected?.cleanAverageNetReturnPercent ?? 0,
+      impairedAverageNetReturnPercent:
+        selected?.impairedAverageNetReturnPercent ?? 0,
+      returnGapPercentagePoints: selected?.returnGapPercentagePoints ?? 0,
+      impairedNetPnlUsd: selected?.impairedNetPnlUsd ?? 0,
+    };
+  });
 }
 
 export function collectPaperTradeOutcomes(
@@ -897,6 +1188,11 @@ export function emptyPaperJournal(
     regimePerformance: calculateRegimePerformance([]),
     assetPerformance: [],
     performanceTimeline: [],
+    dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
+    dataSourceIncidents24h: calculateDataSourceIncidents([]),
+    dataQualityPerformance: calculateDataQualityPerformance([]),
+    sourceQualityImpact: calculateSourceQualityImpact([]),
+    sourceReasonImpact: calculateSourceReasonImpact([]),
     recentOutcomes: [],
     message,
   };
@@ -1048,6 +1344,19 @@ export function evaluatePaperJournal(
       analyticsStartingCapital,
     ),
     performanceTimeline: performanceTimeline(analyticsOutcomes, nowMs),
+    dataSourceQualityHistory24h: calculateDataSourceQualityHistory(
+      analyticsRecords,
+      nowMs,
+    ),
+    dataSourceIncidents24h: calculateDataSourceIncidents(
+      analyticsRecords,
+      nowMs,
+    ),
+    dataQualityPerformance: calculateDataQualityPerformance(
+      analyticsOutcomes,
+    ),
+    sourceQualityImpact: calculateSourceQualityImpact(analyticsOutcomes),
+    sourceReasonImpact: calculateSourceReasonImpact(analyticsOutcomes),
     recentOutcomes: outcomes
       .filter((outcome) => signalModel(outcome) === "chart")
       .toReversed()

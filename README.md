@@ -68,6 +68,12 @@ Ethereumウォレットを読み取り、DEXの価格・流動性と5分足を�
 - 30日紙上結果を確信度0–49・50–69・70–100に分け、モデルの過信を可視化
 - チャートモデルの30日成績を5つの市場局面別に分解
 - 10件以上の局面で30日損益と平均リターン・Profit Factorの悪化を研究アラート表示
+- シグナル理由・スコア・確信度・6時間後結果を判断ID単位で監査表示・CSV出力
+- Blockscout・Dexscreener・GeckoTerminal・Ethereum RPC・KyberSwapの取得率と欠損率を監視
+- 取得元別の24時間可用率・平均取得率・連続失敗と障害復旧状態を監視
+- 判断時の取得元品質を6時間後結果へ紐付け、品質帯別の30日成績を比較
+- 取得元ごとに正常時と欠損時の30日リターン差を比較し、品質影響を分離
+- 同じ判断理由を正常時と欠損時で比較し、取得元劣化の影響を受けた理由を表示
 
 ## v1.1 ポートフォリオリスク判定
 
@@ -194,9 +200,93 @@ GitHub Actionsはmain更新後と毎時17分に本番healthを確認します。
 
 アラートは研究用ダッシュボードの観測通知だけです。モデルの戦略切替、新規BUY停止、SELL、PAPER MODE、`executionLocked: true`を変更しません。
 
+## v1.18 判断監査ビュー
+
+新しい紙上シグナルへ最大5件の判断理由を保存し、直近の採点結果を判断ID単位で監査できるようにします。モデル、方向、スコア、確信度、エントリー価格、6時間後価格、想定コスト、コスト後損益、判断時刻を同じカードで確認できます。
+
+既存レコードは判断理由なしのまま互換表示します。CSVにもスコア、確信度、市場局面、判断理由を追加しますが、秘密情報やウォレットアドレスは出力しません。監査情報は研究表示だけで、BUY／SELL判定には接続しません。
+
+## v1.19 データ取得元の品質監視
+
+Blockscout、Dexscreener、GeckoTerminal、Ethereum RPC、KyberSwapについて、今回スキャンの検査対象数・成功数・取得率・欠損率を同じ画面で表示します。Ethereum RPCは取得できた最新ブロックの最大データ年齢も表示します。
+
+品質表示は読み取り専用です。対象なしを成功扱いせず`NO SAMPLE`、一部失敗を`PARTIAL`として可視化しますが、既存のFail Closed、SELL経路、PAPER MODE、`executionLocked: true`は変更しません。
+
+## v1.20 24時間データ品質履歴
+
+5分ごとの紙上スキャンへ各取得元の状態・取得率・データ年齢を保存し、直近24時間の可用率、平均取得率、現在の連続失敗数を表示します。旧レコードには品質情報がないため集計対象外とし、12回（約1時間）の観測までは`COLLECTING`です。
+
+12回以降は可用率95%以上・平均取得率90%以上・連続失敗3回未満を`STABLE`、それ以外を`DEGRADED`として観測します。この履歴も研究用の読み取り表示だけで、BUY／SELL判定や既存の安全ゲートには接続しません。
+
+## v1.21 取得元障害と復旧確認
+
+取得元ごとに3回連続で`NO SAMPLE`になった時点を障害開始として記録し、直近24時間の障害回数・開始時刻・現在の失敗連続数を表示します。障害後は3回連続で`HEALTHY`を確認するまで復旧扱いにせず、途中の`PARTIAL`で復旧カウントをリセットします。
+
+状態は`INCIDENT OPEN`、`RECOVERED`、`NO INCIDENT`、観測不足時の`WATCH COLLECTING`で表示します。障害監視は運用品質の可視化専用で、既存のFail Closed、SELL経路、PAPER MODE、`executionLocked: true`を変更しません。
+
+## v1.22 判断時データ品質別の成績
+
+6時間後に紙上判断を採点するとき、エントリー時点の5取得元を`COMPLETE`、`PARTIAL`、`UNAVAILABLE`へ分類し、平均取得率と不足元を結果へ紐付けます。品質記録のない旧データは`LEGACY / UNKNOWN`として推測せず分離します。
+
+チャートモデルの30日成績を品質帯ごとに件数・勝率・コスト後損益・平均リターンで比較し、CSV監査にも同じ根拠を追加します。各帯10件までは`COLLECTING`とし、この分析はモデルや売買ゲートを自動変更しません。
+
+## v1.23 取得元別の成績影響分析
+
+Blockscout、Dexscreener、GeckoTerminal、Ethereum RPC、KyberSwapごとに、判断時にその取得元が正常だった結果と、`PARTIAL`または`NO SAMPLE`だった結果を分けて30日平均リターンを比較します。品質記録のない旧結果は比較から除外します。
+
+正常時・品質低下時がそれぞれ10件に達し、品質低下時の損益がマイナスかつ平均リターン差が-1ポイント以下なら`PERFORMANCE ALERT`を表示します。これは原因候補を切り分ける研究アラートで、モデル切替、新規BUY停止、SELL、実行ロックを変更しません。
+
+## v1.24 判断理由別の取得元影響分析
+
+取得元ごとに、同じ判断理由が記録されたチャートモデル結果だけを正常時と品質低下時に分けて比較します。両群が各5件に達するまでは`COLLECTING`とし、条件を満たした理由のうち平均リターン差が最も悪いものを表示します。
+
+品質低下時の損益がマイナスかつ平均リターン差が-1ポイント以下なら`REASON ALERT`を表示します。動的な判断文を根拠単位で監査する研究表示であり、モデル選択、BUY/SELLゲート、実行ロックには接続しません。
+## v1.25 統合版：研究データ出力
+
+認証済みダッシュボードから、6時間後採点結果・確信度校正・市場局面別成績をCSVで個別出力できます。全分析と判断理由を含む採点明細をまとめたJSONも用意し、外部分析や判断監査へ再利用できます。
+
+出力APIは`private, no-store`で、既存のBasic認証境界内に置きます。CSVの数式注入を無害化し、JSONにも`researchOnly: true`と`executionLocked: true`を明記します。エクスポートは読み取り専用で、売買判定・保存データ・実行ロックを変更しません。
+## v1.25 統合版：市場局面別ウォークフォワード比較
+
+360本の先行履歴に続く120本（10時間）のテスト窓を、その開始時点までに確定した情報だけで市場局面へ分類します。各局面でSUMI、EMA 9/21順張り、RSI 30/70平均回帰のコスト後複利リターン、取引数、勝ち越し窓率、首位戦略を同じ条件で比較します。
+
+未来の局面情報をテスト窓へ持ち込まず、窓数を併記して少数標本を明示します。結果は研究表示専用で、首位戦略への自動切替、BUY／SELL判定、ポートフォリオ安全ゲートには接続しません。
+
 双方向見積はルートAPIの読み取り結果であり、実際のオンチェーン約定や売却成功を保証するものではありません。見積の有効時間は30秒として扱い、API停止時は安全側へ閉じて新規BUYを止めます。
 
 バックテストとモンテカルロ再標本化は将来の利益や損失確率を保証しません。標準設定では片道ガス代を4ドル、スリッページを0.35%として保守的に判定します。約500ドル規模のEthereumメインネット運用では、チャートが良くてもコストゲートや耐久試験で注文を見送ることがあります。
+
+## v1.26 品質分析データの出力
+
+研究用JSONへ、判断時データ品質別成績・取得元別成績影響・判断理由別取得元影響を追加しました。既存のJSONフィールドとschemaVersionは維持し、3つの集計配列を追加しています。同じ分析を`dataset=data-quality`、`dataset=source-impact`、`dataset=source-reasons`のCSVでもダウンロードできます。
+
+各出力は画面と同じ30日集計を使用し、観測件数・最低件数・収集中状態を明記します。旧記録の品質不明はunknownとして保持します。認証・読み取り専用・実売買ロックを維持し、分析結果で売買条件を変更しません。
+
+## v1.27 出力の集計時刻と対象期間
+
+ダウンロード開始時のUTC時刻を一度だけ確定し、記録取得・30日集計・JSON・ファイル名へ共通で使用します。CSVは既存列の末尾へ集計時刻、対象期間の開始・終了、採点時刻基準（outcome_time）を追加します。空のCSVでもHTTPレスポンスヘッダーから対象期間を確認できます。
+
+JSONには対象期間と各分析の対象モデルも明記します。採点明細と確信度校正は両モデル、局面・品質・取得元影響はチャートモデルが対象です。対象期間は集計条件であり、30日分の記録が揃っていることを保証しません。実行ロックと売買判定は変更しません。
+
+## v1.27.1 CSVの数式解釈対策
+
+空白・タブ・改行・不可視文字を前置した数式候補も、CSVでは先頭にアポストロフィを付けて文字列として出力します。元の文字列は削除せず保持し、数値型の損益（負数を含む）は数値のまま出力します。すべてのCSVが共通のセル処理を使用します。
+
+## v1.27.2 JSON明細の出力制限
+
+研究用JSONの採点明細は明示した項目だけを出力します。保存オブジェクトや品質情報に未知の内部項目が混在しても、出力前に除外します。既存の任意項目がない旧明細は引き続き扱えます。数値や明細の形式が不正な場合はダウンロードを503で停止し、内部エラー詳細は返しません。
+
+## v1.27.3 障害監視の連続性
+
+障害開始・復旧に必要な3回の観測は、5分枠が連続している場合だけ数えます。スキャン欠落、取得元の品質情報欠落、同一時刻の重複がある場合は連続数をリセットします（v1.27.4以降は重複を1観測へ統合）。開いている障害は欠測で解除せず、その後3回の連続正常観測で復旧を確認します。画面の失敗・復旧連続数にも同じ基準を適用します。研究用の監視表示に限る変更で、売買条件は変更しません。
+
+## v1.27.4 品質監視の重複集計防止
+
+取得元ごとに同じ5分枠の記録を1観測へ統合し、正常率・平均取得率・観測件数・障害判定へ共通で使用します。状態が食い違う重複は悪い状態を優先し、取得率は最小値を採用します。入力順序によって判定が変わらず、重複だけで最低観測件数へ達することを防ぎます。保存データは変更しません。
+
+## v1.28 取得元ごとの観測鮮度
+
+品質履歴カードに、最終観測時刻（UTC）と経過時間を表示します。最後の観測から15分を超えた取得元は、過去の正常率にかかわらずSTALE OBSERVATIONSとして表示します。観測なしは収集中として区別し、新しい観測で経過時間を更新します。health APIにも遅延した取得元の識別子だけを返します。監視表示の追加であり、既存の売買ゲート・実行ロックは変更しません。
 
 ## ローカル起動
 
@@ -215,6 +305,12 @@ npm run dev
 npm run check
 npm run build
 ```
+
+## GitHubでの自動検証
+
+`Application quality`はすべてのPRとmainへのpushで、Node.js 24・lockfile固定の依存関係を使い、lint・型チェック・全アプリテスト・本番用ビルドを順に実行します。実データの取得や本番シークレットは不要です。同じPRへの更新が続いた場合は古い検証を中止し、最新の変更を検証します。
+
+本番監視スクリプトの回帰テストと本番health監視は別のワークフローとして継続します。このCIの追加だけでは、GitHubのマージ必須チェック設定は変更されません。
 
 ## 実売買接続前の必須条件
 
@@ -264,3 +360,17 @@ KyberSwap Aggregator APIのルート照会にはAPIキーを保存せず、公�
 - 署名経路を追加するまでは、コード上も実資産を動かせない
 - Vercel上ではBasic認証を必須化し、未設定時は失敗側へ閉じる
 - ERC-20の無期限・無制限承認を使わない
+
+### Source freshness across the statistics window
+
+Source freshness uses the latest retained observation at or before the evaluation time, even when older than 24 hours. Availability, coverage, observation counts and failure streaks still use only the 24-hour window. A stopped source therefore remains stale while its last observation is retained; a source with no retained observation remains collecting. Future observations are ignored.
+
+### Health API source quality summary
+
+`/api/health` exposes `dataSourceQualityStatus` with precedence `stale`, `degraded`, `collecting`, then `healthy`. Separate `staleDataSources`, `degradedDataSources` and `collectingDataSources` arrays retain all affected source IDs. Missing history is collecting; an empty incident history is also collecting rather than monitoring. These fields describe observed source quality and do not change the service liveness response or execution lock.
+
+### Automated source monitoring
+
+The production health checker blocks on stale/degraded source quality and open source incidents. Missing or unknown quality/incident states also block. Collecting observations produces a `DATA_SOURCE_COLLECTING` report warning without failing the check; recovered incidents are accepted. Reports retain only known source IDs and recognized source status values. These checks take effect when the integration branch is deployed to production.
+
+The health checker also examines affected-source lists independently of summary statuses: known stale/degraded/open-incident entries block even if the summary says healthy or recovered. Collecting entries preserve the collection warning. Missing, non-array or unknown-ID lists block with `DATA_SOURCE_LIST_INVALID`; reports still filter unknown values.

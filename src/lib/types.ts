@@ -163,6 +163,24 @@ export interface StrategyComparisonResult {
   rank: number;
 }
 
+export interface StrategyRegimeWalkForwardResult {
+  id: StrategyComparisonId;
+  name: string;
+  windowCount: number;
+  tradeCount: number;
+  profitableWindowRate: number;
+  netReturnPercent: number;
+  rank: number;
+}
+
+export interface StrategyRegimeWalkForward {
+  regime: MarketRegime;
+  windowCount: number;
+  leaderId: StrategyComparisonId | null;
+  researchOnly: true;
+  results: StrategyRegimeWalkForwardResult[];
+}
+
 export interface StrategyComparisonSnapshot {
   status: "ready" | "insufficient";
   candleCount: number;
@@ -170,6 +188,7 @@ export interface StrategyComparisonSnapshot {
   leaderId: StrategyComparisonId | null;
   researchOnly: true;
   results: StrategyComparisonResult[];
+  walkForwardByRegime: StrategyRegimeWalkForward[];
   notes: string[];
 }
 
@@ -220,6 +239,71 @@ export interface ChartModelSnapshot {
     correlationSeries: CorrelationPricePoint[];
   };
   warnings: string[];
+}
+
+export type DataSourceId =
+  | "blockscout"
+  | "dexscreener"
+  | "geckoterminal"
+  | "ethereum-rpc"
+  | "kyberswap";
+
+export interface DataSourceQualityItem {
+  source: DataSourceId;
+  status: "healthy" | "degraded" | "unavailable";
+  observedCount: number;
+  successfulCount: number;
+  coveragePercent: number;
+  dataAgeSeconds: number | null;
+  reasons: string[];
+}
+
+export interface DataSourceQualitySnapshot {
+  generatedAt: string;
+  status: "healthy" | "degraded";
+  sources: DataSourceQualityItem[];
+  readOnly: true;
+}
+
+export interface PaperDataSourceObservation {
+  source: DataSourceId;
+  status: DataSourceQualityItem["status"];
+  coveragePercent: number;
+  dataAgeSeconds: number | null;
+}
+
+export type PaperDecisionDataQualityStatus =
+  | "complete"
+  | "partial"
+  | "unavailable";
+
+export interface PaperDecisionDataQuality {
+  status: PaperDecisionDataQualityStatus;
+  averageCoveragePercent: number;
+  degradedSources: DataSourceId[];
+  unavailableSources: DataSourceId[];
+}
+
+export interface DataSourceQualityHistoryItem {
+  source: DataSourceId;
+  status: "collecting" | "healthy" | "degraded" | "stale";
+  lastObservedAt: string | null;
+  observationAgeSeconds: number | null;
+  observationCount: number;
+  minimumObservations: 12;
+  availabilityPercent: number;
+  averageCoveragePercent: number;
+  currentFailureStreak: number;
+}
+
+export interface DataSourceIncidentItem {
+  source: DataSourceId;
+  status: "collecting" | "monitoring" | "incident" | "recovered";
+  incidentCount24h: number;
+  currentFailureStreak: number;
+  currentRecoveryStreak: number;
+  latestIncidentStartedAt: string | null;
+  latestRecoveredAt: string | null;
 }
 
 export interface MarketData {
@@ -443,6 +527,7 @@ export interface PaperSignalObservation {
   modelScore: number;
   confidence: number;
   marketRegime?: MarketRegime;
+  decisionReasons?: string[];
   notionalUsd: number;
   estimatedCostUsd: number;
   costGatePassed: boolean;
@@ -467,6 +552,7 @@ export interface PaperScanRecord {
   executionLocked: true;
   prices: Record<string, number>;
   signals: PaperSignalObservation[];
+  dataSourceQuality?: PaperDataSourceObservation[];
 }
 
 export interface PaperTradeOutcome extends PaperSignalObservation {
@@ -477,6 +563,42 @@ export interface PaperTradeOutcome extends PaperSignalObservation {
   netReturnPercent: number;
   netPnlUsd: number;
   won: boolean;
+  entryDataQuality?: PaperDecisionDataQuality;
+}
+
+export interface PaperDataQualityPerformance {
+  band: PaperDecisionDataQualityStatus | "unknown";
+  status: "collecting" | "monitoring";
+  minimumSamples: 10;
+  maturedCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+}
+
+export interface PaperSourceQualityImpact {
+  source: DataSourceId;
+  status: "collecting" | "monitoring" | "performance-alert";
+  minimumSamples: 10;
+  cleanCount: number;
+  impairedCount: number;
+  cleanAverageNetReturnPercent: number;
+  impairedAverageNetReturnPercent: number;
+  returnGapPercentagePoints: number;
+  impairedNetPnlUsd: number;
+}
+
+export interface PaperSourceReasonImpact {
+  source: DataSourceId;
+  status: "collecting" | "monitoring" | "performance-alert";
+  minimumSamples: 5;
+  reason: string | null;
+  cleanCount: number;
+  impairedCount: number;
+  cleanAverageNetReturnPercent: number;
+  impairedAverageNetReturnPercent: number;
+  returnGapPercentagePoints: number;
+  impairedNetPnlUsd: number;
 }
 
 export interface PaperQualification {
@@ -643,6 +765,11 @@ export interface PaperJournalSnapshot {
   regimePerformance: PaperRegimePerformance[];
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
+  dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];
+  dataSourceIncidents24h: DataSourceIncidentItem[];
+  dataQualityPerformance: PaperDataQualityPerformance[];
+  sourceQualityImpact: PaperSourceQualityImpact[];
+  sourceReasonImpact: PaperSourceReasonImpact[];
   recentOutcomes: PaperTradeOutcome[];
   message: string;
 }
