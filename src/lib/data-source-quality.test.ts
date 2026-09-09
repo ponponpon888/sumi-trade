@@ -278,4 +278,36 @@ describe("data source quality", () => {
       .toMatchObject({ incidentCount24h: 0, currentFailureStreak: 1 });
   });
 
+  it("counts one observation per source and slot, not twelve duplicate records", () => {
+    const now = Date.parse("2026-09-09T12:00:00Z");
+    const record = historyRecord(now);
+    const records = Array.from({ length: 12 }, () => record);
+    expect(calculateDataSourceQualityHistory(records, now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ status: "collecting", observationCount: 1 });
+  });
+
+  it("resolves conflicting duplicate observations conservatively regardless of order", () => {
+    const now = Date.parse("2026-09-09T12:00:00Z");
+    const records = [10, 5, 0].flatMap((minutes) => [
+      historyRecord(now - minutes * 60_000, "unavailable"),
+      historyRecord(now - minutes * 60_000, "healthy"),
+    ]);
+    const history = calculateDataSourceQualityHistory(records, now);
+    expect(history).toEqual(calculateDataSourceQualityHistory(records.toReversed(), now));
+    expect(history.find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ observationCount: 3, availabilityPercent: 0, averageCoveragePercent: 0, currentFailureStreak: 3 });
+    const incidents = calculateDataSourceIncidents(records, now);
+    expect(incidents).toEqual(calculateDataSourceIncidents(records.toReversed(), now));
+    expect(incidents.find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ status: "incident", incidentCount24h: 1 });
+  });
+
+  it("deduplicates repeated source entries within one record", () => {
+    const now = Date.parse("2026-09-09T12:00:00Z");
+    const record = historyRecord(now);
+    record.dataSourceQuality!.push({ ...record.dataSourceQuality![0], status: "degraded", coveragePercent: 50 });
+    expect(calculateDataSourceQualityHistory([record], now).find((item) => item.source === "ethereum-rpc"))
+      .toMatchObject({ observationCount: 1, averageCoveragePercent: 50 });
+  });
+
 });

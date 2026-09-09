@@ -38,6 +38,27 @@ function trailingConsecutiveCount(
   return count;
 }
 
+function uniqueSourceObservations(records: PaperScanRecord[], source: DataSourceId) {
+  const slots = new Map<number, TimedQuality & { coveragePercent: number }>();
+  const severity = { healthy: 0, degraded: 1, unavailable: 2 };
+  for (const record of records) {
+    for (const item of record.dataSourceQuality ?? []) {
+      if (item.source !== source) continue;
+      const previous = slots.get(record.bucketTimeMs);
+      slots.set(record.bucketTimeMs, {
+        bucketTimeMs: record.bucketTimeMs,
+        status: previous && severity[previous.status] > severity[item.status]
+          ? previous.status
+          : item.status,
+        coveragePercent: previous
+          ? Math.min(previous.coveragePercent, item.coveragePercent)
+          : item.coveragePercent,
+      });
+    }
+  }
+  return [...slots.values()].toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
+}
+
 function round(value: number, digits = 1): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -164,11 +185,7 @@ export function calculateDataSourceQualityHistory(
     .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
 
   return DATA_SOURCE_IDS.map((source) => {
-    const sourceObservations = observations.flatMap((record) =>
-      (record.dataSourceQuality ?? [])
-        .filter((item) => item.source === source)
-        .map((item) => ({ ...item, bucketTimeMs: record.bucketTimeMs })),
-    );
+    const sourceObservations = uniqueSourceObservations(observations, source);
     const observationCount = sourceObservations.length;
     const availableCount = sourceObservations.filter(
       (item) => item.status !== "unavailable",
@@ -218,11 +235,7 @@ export function calculateDataSourceIncidents(
     .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
 
   return DATA_SOURCE_IDS.map((source) => {
-    const sourceObservations = observations.flatMap((record) =>
-      (record.dataSourceQuality ?? [])
-        .filter((item) => item.source === source)
-        .map((item) => ({ ...item, bucketTimeMs: record.bucketTimeMs })),
-    );
+    const sourceObservations = uniqueSourceObservations(observations, source);
     let failureStreak = 0;
     let recoveryStreak = 0;
     let incidentOpen = false;
