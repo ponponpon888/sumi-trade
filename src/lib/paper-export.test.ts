@@ -187,6 +187,30 @@ describe("paper research export", () => {
     expect(parsed.regimePerformance[0].regime).toBe("uptrend");
   });
 
+  it("strips internal fields from stored outcomes and nested quality evidence", () => {
+    const sample = {
+      ...outcome(), walletAddress: "INTERNAL-WALLET", debugSecret: "INTERNAL-SECRET",
+      entryDataQuality: {
+        ...outcome().entryDataQuality!, diagnosticUrl: "INTERNAL-ENDPOINT",
+      },
+    };
+    const input = {
+      analyticsWindowDays: 30 as const,
+      confidenceCalibrationByModel: { chart: calibration("chart"), "community-trend": calibration("community-trend") },
+      regimePerformance: [regime()],
+      dataQualityPerformance: calculateDataQualityPerformance([sample]),
+      sourceQualityImpact: calculateSourceQualityImpact([sample]),
+      sourceReasonImpact: calculateSourceReasonImpact([sample]),
+    };
+    const json = buildPaperResearchJson([sample], input);
+    expect(json).not.toContain("INTERNAL-");
+    expect(JSON.parse(json).outcomes[0]).toEqual(outcome());
+    expect(sample.walletAddress).toBe("INTERNAL-WALLET");
+    expect(() => buildPaperResearchJson([outcome({ netPnlUsd: NaN })], input)).toThrow();
+    const legacy = outcome({ decisionId: undefined, model: undefined, entryDataQuality: undefined });
+    expect(JSON.parse(buildPaperResearchJson([legacy], input)).outcomes[0].entryDataQuality).toBeUndefined();
+  });
+
   it("preserves unknown legacy data and collecting sample counts in quality CSV", () => {
     const samples = [outcome(), outcome({ entryDataQuality: undefined })];
     const csv = buildPaperDataQualityCsv(calculateDataQualityPerformance(samples));

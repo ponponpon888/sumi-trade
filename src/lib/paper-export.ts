@@ -1,3 +1,5 @@
+import { sanitizePaperExportOutcomes } from "@/lib/paper-outcome-export";
+
 import type {
   PaperJournalSnapshot,
   PaperRegimePerformance,
@@ -275,7 +277,7 @@ export function buildPaperResearchJson(
       dataQualityPerformance: journal.dataQualityPerformance,
       sourceQualityImpact: journal.sourceQualityImpact,
       sourceReasonImpact: journal.sourceReasonImpact,
-      outcomes,
+      outcomes: sanitizePaperExportOutcomes(outcomes),
     },
     null,
     2,
