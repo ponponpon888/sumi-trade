@@ -368,3 +368,7 @@ Source freshness uses the latest retained observation at or before the evaluatio
 ### Health API source quality summary
 
 `/api/health` exposes `dataSourceQualityStatus` with precedence `stale`, `degraded`, `collecting`, then `healthy`. Separate `staleDataSources`, `degradedDataSources` and `collectingDataSources` arrays retain all affected source IDs. Missing history is collecting; an empty incident history is also collecting rather than monitoring. These fields describe observed source quality and do not change the service liveness response or execution lock.
+
+### Automated source monitoring
+
+The production health checker blocks on stale/degraded source quality and open source incidents. Missing or unknown quality/incident states also block. Collecting observations produces a `DATA_SOURCE_COLLECTING` report warning without failing the check; recovered incidents are accepted. Reports retain only known source IDs and recognized source status values. These checks take effect when the integration branch is deployed to production.
