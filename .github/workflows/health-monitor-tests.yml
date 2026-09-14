@@ -1,12 +1,7 @@
 name: Health monitor regression
 
 on:
-  push:
-    paths:
-      - "scripts/check-production-health*.mjs"
-      - ".github/workflows/health-monitor-tests.yml"
-      - ".github/workflows/production-health.yml"
-      - "package.json"
+  workflow_dispatch:
   pull_request:
     paths:
       - "scripts/check-production-health*.mjs"

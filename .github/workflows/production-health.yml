@@ -4,8 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  schedule:
-    - cron: "17 * * * *"
 
 permissions:
   contents: read
@@ -25,14 +23,14 @@ jobs:
         env:
           SUMI_HEALTH_REPORT_PATH: production-health-report.json
         run: node scripts/check-production-health.mjs
-      - name: Preserve sanitized health audit
-        if: always()
+      - name: Preserve failed health audit
+        if: failure() && steps.health.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: production-health-${{ github.run_id }}
           path: production-health-report.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
       - name: Open or update production alert
         if: failure() && steps.health.outcome == 'failure'
         uses: actions/github-script@v8

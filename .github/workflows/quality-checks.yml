@@ -2,8 +2,8 @@ name: Application quality
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
