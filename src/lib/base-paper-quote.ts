@@ -27,19 +27,27 @@ const unitsSchema = z.string().regex(/^[1-9][0-9]{0,77}$/)
     }
   });
 const decimalSchema = z.string().regex(/^(0|[1-9][0-9]{0,17})(\.[0-9]{1,18})?$/);
+// Display-only provider value: returned as-is, never converted. KyberSwap Base returns 21+ decimals.
+const l1FeeUsdSchema = z.string().regex(/^(0|[1-9][0-9]{0,17})(\.[0-9]{1,36})?$/);
 const timestampSchema = z.union([
   z.number().int().positive().safe(),
   z.string().regex(/^[1-9][0-9]{0,12}$/).transform(Number),
 ]);
+const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/)
+  .refine((value) => !/^0x0{40}$/.test(value));
 const routeSchema = z.object({
   code: z.literal(0),
   data: z.object({
+    routerAddress: addressSchema,
     routeSummary: z.object({
       tokenIn: z.string(),
       tokenOut: z.string(),
       amountIn: unitsSchema,
       amountOut: unitsSchema,
+      gas: unitsSchema,
+      gasPrice: unitsSchema,
       gasUsd: decimalSchema,
+      l1FeeUsd: l1FeeUsdSchema.nullish(),
       timestamp: timestampSchema,
     }),
   }),
@@ -62,6 +70,18 @@ function parseRouteResponse(value: unknown, errorCode: "BUY_ROUTE_RESPONSE_INVAL
   const parsed = routeSchema.safeParse(value);
   if (!parsed.success) throw new BasePaperQuoteError(errorCode);
   return parsed.data;
+}
+
+type RouteSummary = ReturnType<typeof parseRouteResponse>["data"]["routeSummary"];
+
+// Provider-reported values, kept as validated strings. Never summed, filled in or executed.
+function providerEstimate(summary: RouteSummary) {
+  return {
+    gas: summary.gas,
+    gasPriceWei: summary.gasPrice,
+    gasUsd: summary.gasUsd,
+    l1FeeUsd: summary.l1FeeUsd ?? null,
+  };
 }
 
 function decimal(value: string): { numerator: bigint; denominator: bigint } {
@@ -142,7 +162,8 @@ export async function getBasePaperQuote(
         tokenIn, tokenOut, amountIn: amount.toString(), gasInclude: "true",
         excludeRFQSources: "true",
       });
-      const data = parseRouteResponse(await getJson(`${ROUTES}?${query}`), responseError).data.routeSummary;
+      const response = parseRouteResponse(await getJson(`${ROUTES}?${query}`), responseError).data;
+      const data = response.routeSummary;
       if (data.tokenIn.toLowerCase() !== tokenIn.toLowerCase() ||
           data.tokenOut.toLowerCase() !== tokenOut.toLowerCase() ||
           data.amountIn !== amount.toString()) throw new BasePaperQuoteError("QUOTE_MISMATCH");
@@ -150,12 +171,14 @@ export async function getBasePaperQuote(
       checkTime(quotedAtMs, now(), QUOTE_AGE_MS, "QUOTE_STALE");
       const minimumOut = BigInt(data.amountOut) * BigInt(10_000 - SLIPPAGE_BPS) / BigInt(10_000);
       if (minimumOut === BigInt(0)) throw new BasePaperQuoteError("AMOUNT_TOO_LOW");
-      return { data, quotedAtMs, minimumOut };
+      return { data, routerAddress: response.routerAddress.toLowerCase(), quotedAtMs, minimumOut };
     }
 
     const buy = await route(NATIVE_ETH, BASE_USDC, amountIn, "BUY_ROUTE_RESPONSE_INVALID");
     // Quote the sale of the conservative buy output, never the optimistic output.
     const sell = await route(BASE_USDC, NATIVE_ETH, buy.minimumOut, "SELL_ROUTE_RESPONSE_INVALID");
+    // Both legs must name the same router. It is reported only; never approved, signed or sent to.
+    if (buy.routerAddress !== sell.routerAddress) throw new BasePaperQuoteError("QUOTE_MISMATCH");
     const observedAtMs = now();
     checkTime(buy.quotedAtMs, observedAtMs, QUOTE_AGE_MS, "QUOTE_STALE");
     checkTime(sell.quotedAtMs, observedAtMs, QUOTE_AGE_MS, "QUOTE_STALE");
@@ -184,6 +207,7 @@ export async function getBasePaperQuote(
       pair: "ETH/USDC/ETH",
       requestedYen,
       amountInWei: amountIn.toString(),
+      buyAmountOutUsdcUnits: buy.data.amountOut,
       buyMinimumOutUsdcUnits: buy.minimumOut.toString(),
       sellMinimumOutWei: sell.minimumOut.toString(),
       assumedSlippageBpsPerLeg: SLIPPAGE_BPS,
@@ -191,6 +215,8 @@ export async function getBasePaperQuote(
       observedAtMs,
       quoteExpiresAtMs: Math.min(buy.quotedAtMs, sell.quotedAtMs) + QUOTE_AGE_MS,
       provider: "kyberswap",
+      routerAddress: buy.routerAddress,
+      providerEstimate: { buy: providerEstimate(buy.data), sell: providerEstimate(sell.data) },
       providerSwapGasEstimateYen: { buy: buyGasYen, sell: sellGasYen },
       swapShortfallEstimateYen: swapShortfallYen,
       knownCostEstimateYen: Number(knownCostEstimateYen),
