@@ -19,7 +19,13 @@ export class BasePaperQuoteError extends Error {
 }
 
 const unitsSchema = z.string().regex(/^[1-9][0-9]{0,77}$/)
-  .refine((value) => BigInt(value) <= MAX_UINT);
+  .refine((value) => {
+    try {
+      return BigInt(value) <= MAX_UINT;
+    } catch {
+      return false;
+    }
+  });
 const decimalSchema = z.string().regex(/^(0|[1-9][0-9]{0,17})(\.[0-9]{1,18})?$/);
 const timestampSchema = z.union([
   z.number().int().positive().safe(),
@@ -45,6 +51,18 @@ const priceSchema = z.object({
     last_updated_at: z.number().int().positive().safe(),
   }),
 });
+
+function parsePriceResponse(value: unknown) {
+  const parsed = priceSchema.safeParse(value);
+  if (!parsed.success) throw new BasePaperQuoteError("PRICE_RESPONSE_INVALID");
+  return parsed.data;
+}
+
+function parseRouteResponse(value: unknown, errorCode: "BUY_ROUTE_RESPONSE_INVALID" | "SELL_ROUTE_RESPONSE_INVALID") {
+  const parsed = routeSchema.safeParse(value);
+  if (!parsed.success) throw new BasePaperQuoteError(errorCode);
+  return parsed.data;
+}
 
 function decimal(value: string): { numerator: bigint; denominator: bigint } {
   const parsed = decimalSchema.parse(value);
@@ -106,7 +124,7 @@ export async function getBasePaperQuote(
   }
 
   try {
-    const price = priceSchema.parse(await getJson(PRICE)).ethereum;
+    const price = parsePriceResponse(await getJson(PRICE)).ethereum;
     const valuationAtMs = price.last_updated_at * 1_000;
     checkTime(valuationAtMs, now(), PRICE_AGE_MS, "PRICE_STALE");
     const yen = decimal(String(price.jpy));
@@ -114,12 +132,17 @@ export async function getBasePaperQuote(
     const amountIn = BigInt(requestedYen) * yen.denominator * WEI / yen.numerator;
     unitsSchema.parse(amountIn.toString());
 
-    async function route(tokenIn: string, tokenOut: string, amount: bigint) {
+    async function route(
+      tokenIn: string,
+      tokenOut: string,
+      amount: bigint,
+      responseError: "BUY_ROUTE_RESPONSE_INVALID" | "SELL_ROUTE_RESPONSE_INVALID",
+    ) {
       const query = new URLSearchParams({
         tokenIn, tokenOut, amountIn: amount.toString(), gasInclude: "true",
         excludeRFQSources: "true",
       });
-      const data = routeSchema.parse(await getJson(`${ROUTES}?${query}`)).data.routeSummary;
+      const data = parseRouteResponse(await getJson(`${ROUTES}?${query}`), responseError).data.routeSummary;
       if (data.tokenIn.toLowerCase() !== tokenIn.toLowerCase() ||
           data.tokenOut.toLowerCase() !== tokenOut.toLowerCase() ||
           data.amountIn !== amount.toString()) throw new BasePaperQuoteError("QUOTE_MISMATCH");
@@ -130,9 +153,9 @@ export async function getBasePaperQuote(
       return { data, quotedAtMs, minimumOut };
     }
 
-    const buy = await route(NATIVE_ETH, BASE_USDC, amountIn);
+    const buy = await route(NATIVE_ETH, BASE_USDC, amountIn, "BUY_ROUTE_RESPONSE_INVALID");
     // Quote the sale of the conservative buy output, never the optimistic output.
-    const sell = await route(BASE_USDC, NATIVE_ETH, buy.minimumOut);
+    const sell = await route(BASE_USDC, NATIVE_ETH, buy.minimumOut, "SELL_ROUTE_RESPONSE_INVALID");
     const observedAtMs = now();
     checkTime(buy.quotedAtMs, observedAtMs, QUOTE_AGE_MS, "QUOTE_STALE");
     checkTime(sell.quotedAtMs, observedAtMs, QUOTE_AGE_MS, "QUOTE_STALE");

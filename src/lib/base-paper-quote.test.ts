@@ -84,12 +84,12 @@ describe("read-only Base quote observation", () => {
     ["tokenOut", ETH, "QUOTE_MISMATCH"],
     ["amountIn", "2000000000000000", "QUOTE_MISMATCH"],
     ["amountOut", "1", "AMOUNT_TOO_LOW"],
-    ["amountOut", "1e18", "INVALID_PROVIDER_DATA"],
-    ["amountOut", "0", "INVALID_PROVIDER_DATA"],
-    ["amountOut", (BigInt(1) << BigInt(256)).toString(), "INVALID_PROVIDER_DATA"],
-    ["gasUsd", "", "INVALID_PROVIDER_DATA"],
-    ["gasUsd", "-1", "INVALID_PROVIDER_DATA"],
-    ["gasUsd", null, "INVALID_PROVIDER_DATA"],
+    ["amountOut", "1e18", "BUY_ROUTE_RESPONSE_INVALID"],
+    ["amountOut", "0", "BUY_ROUTE_RESPONSE_INVALID"],
+    ["amountOut", (BigInt(1) << BigInt(256)).toString(), "BUY_ROUTE_RESPONSE_INVALID"],
+    ["gasUsd", "", "BUY_ROUTE_RESPONSE_INVALID"],
+    ["gasUsd", "-1", "BUY_ROUTE_RESPONSE_INVALID"],
+    ["gasUsd", null, "BUY_ROUTE_RESPONSE_INVALID"],
     ["timestamp", NOW / 1000 - 11, "QUOTE_STALE"],
     ["timestamp", NOW / 1000 + 1, "QUOTE_STALE"],
   ])("fails closed for buy %s=%s", async (key, value, code) => {
@@ -105,6 +105,16 @@ describe("read-only Base quote observation", () => {
     sell.data.routeSummary.amountIn = "2500000";
     const { dependencies } = fixture([price(), route(true), sell]);
     await expect(getBasePaperQuote(500, dependencies)).rejects.toMatchObject({ code: "QUOTE_MISMATCH" });
+  });
+
+  it.each([
+    ["price", [{ ethereum: { jpy: 0, usd: 2_500, last_updated_at: NOW / 1_000 } }], "PRICE_RESPONSE_INVALID"],
+    ["buy route", [price(), { code: "unexpected" }], "BUY_ROUTE_RESPONSE_INVALID"],
+    ["sell route", [price(), route(true), { code: "unexpected" }], "SELL_ROUTE_RESPONSE_INVALID"],
+  ])("reports the invalid provider response stage without exposing provider data (%s)", async (_stage, payloads, code) => {
+    const { fetcher, dependencies } = fixture(payloads);
+    await expect(getBasePaperQuote(500, dependencies)).rejects.toMatchObject({ code });
+    expect(fetcher).toHaveBeenCalledTimes(payloads.length);
   });
 
   it("rechecks the BUY quote after a slow SELL request", async () => {
@@ -134,6 +144,6 @@ describe("read-only Base quote observation", () => {
     const { gasUsd: _unused, ...missingGas } = buy.data.routeSummary;
     void _unused;
     const { dependencies } = fixture([price(), { code: 0, data: { routeSummary: missingGas } }]);
-    await expect(getBasePaperQuote(500, dependencies)).rejects.toMatchObject({ code: "INVALID_PROVIDER_DATA" });
+    await expect(getBasePaperQuote(500, dependencies)).rejects.toMatchObject({ code: "BUY_ROUTE_RESPONSE_INVALID" });
   });
 });

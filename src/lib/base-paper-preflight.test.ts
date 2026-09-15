@@ -223,6 +223,7 @@ describe("unsigned Base paper preflight", () => {
 
   it.each([
     "INVALID_AMOUNT", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "INVALID_PROVIDER_DATA",
+    "PRICE_RESPONSE_INVALID", "BUY_ROUTE_RESPONSE_INVALID", "SELL_ROUTE_RESPONSE_INVALID",
     "PRICE_STALE", "QUOTE_MISMATCH", "QUOTE_STALE", "AMOUNT_TOO_LOW", "OBSERVATION_EXPIRED",
   ])("reports allowlisted quote code %s", async (code) => {
     const { dependencies, getQuote } = fixture();

@@ -46,8 +46,9 @@ Baseの往復見積（`getBasePaperQuote`）とウォレット残高観測
 | `BASE_PREFLIGHT_UNAVAILABLE` | 上記以外の想定外エラー |
 
 `sourceError`は、既存ライブラリが返し得る安定コードの許可リストに含まれる場合だけ
-見積側・ウォレット側のコードを返し、それ以外はnull。上流URL、認証情報、raw error、
-レスポンス本文は返さない。
+見積側・ウォレット側のコードを返し、それ以外はnull。見積の形式不正は
+`PRICE_RESPONSE_INVALID`、`BUY_ROUTE_RESPONSE_INVALID`、`SELL_ROUTE_RESPONSE_INVALID`の
+いずれかで段階だけを示す。上流URL、認証情報、raw error、レスポンス本文は返さない。
 
 ## 行わないこと
 
