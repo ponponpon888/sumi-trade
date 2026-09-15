@@ -1,0 +1,227 @@
+import "server-only";
+
+import { z } from "zod";
+
+const BASE_CHAIN_ID = 8453;
+const BASE_USDC_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const ALLOWANCE_SELECTOR = "0xdd62ed3e"; // allowance(address,address)
+const MAX_BLOCK_AGE_SECONDS = 60;
+const MAX_FUTURE_BLOCK_SECONDS = 5;
+const MAX_CODE_BYTES = 24_576; // EIP-170 contract code size limit.
+const MAX_UINT = (BigInt(1) << BigInt(256)) - BigInt(1);
+const POSITIVE_UNITS_PATTERN = /^[1-9][0-9]{0,77}$/;
+const EIP7702_DELEGATION_PATTERN = /^0xef0100[0-9a-f]{40}$/i;
+
+type FetchLike = typeof fetch;
+
+interface RpcReply {
+  id?: unknown;
+  result?: unknown;
+  error?: unknown;
+}
+
+export interface BaseExecutionStateObservationOptions {
+  fetchImpl?: FetchLike;
+  nowMs?: number;
+  environment?: {
+    BASE_RPC_URL?: string;
+    BASE_WALLET_ADDRESS?: string;
+  };
+}
+
+export type BaseExecutionStateObservationErrorCode =
+  | "BASE_WALLET_CONFIGURATION_MISSING"
+  | "BASE_EXECUTION_STATE_INPUT_INVALID"
+  | "BASE_RPC_UNAVAILABLE"
+  | "BASE_RPC_INVALID_RESPONSE"
+  | "BASE_RPC_WRONG_CHAIN"
+  | "BASE_RPC_STALE_BLOCK"
+  | "BASE_EXECUTION_STATE_UNEXPECTED_CODE";
+
+export class BaseExecutionStateObservationError extends Error {
+  constructor(public readonly code: BaseExecutionStateObservationErrorCode) {
+    super(code);
+    this.name = "BaseExecutionStateObservationError";
+  }
+}
+
+// Only the quote fields this observation needs. The quote itself is never executed.
+const quoteSchema = z.object({
+  mode: z.literal("paper"),
+  executionLocked: z.literal(true),
+  profitabilityVerified: z.literal(false),
+  status: z.literal("observed"),
+  readiness: z.literal("blocked"),
+  chainId: z.literal(BASE_CHAIN_ID),
+  routerAddress: z.string().regex(/^0x[0-9a-f]{40}$/).refine((value) => !/^0x0{40}$/.test(value)),
+  // The SELL leg's actual USDC input in the current round-trip quote.
+  buyMinimumOutUsdcUnits: z.string()
+    .refine((value) => POSITIVE_UNITS_PATTERN.test(value) && BigInt(value) <= MAX_UINT),
+});
+
+function validHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function validAddress(value: string): boolean {
+  return /^0x[0-9a-f]{40}$/i.test(value) && !/^0x0{40}$/i.test(value);
+}
+
+// JSON-RPC quantity (chainId, block number, timestamp): no leading zeros.
+function quantityBigInt(value: unknown): bigint | null {
+  if (typeof value !== "string" || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(value)) {
+    return null;
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+// eth_call ABI uint256 return data: exactly 32 bytes (64 hex digits).
+function uint256ReturnData(value: unknown): bigint | null {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/i.test(value)) {
+    return null;
+  }
+  return BigInt(value);
+}
+
+// eth_getCode result: even-length hex data within the EIP-170 size limit.
+function codeData(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2 + MAX_CODE_BYTES * 2) return null;
+  return /^0x(?:[0-9a-f]{2})*$/i.test(value) ? value : null;
+}
+
+function requiredResult(replies: RpcReply[], id: number): unknown {
+  const matching = replies.filter((reply) => reply.id === id);
+  if (matching.length !== 1 || matching[0].error !== undefined || matching[0].result === undefined) {
+    throw new BaseExecutionStateObservationError("BASE_RPC_INVALID_RESPONSE");
+  }
+  return matching[0].result;
+}
+
+function allowanceData(ownerAddress: string, spenderAddress: string): string {
+  return `${ALLOWANCE_SELECTOR}${ownerAddress.slice(2).padStart(64, "0")}${spenderAddress.slice(2).padStart(64, "0")}`;
+}
+
+/**
+ * Read-only Smart Account deployment and USDC allowance observation.
+ * No signature, approval, permit, calldata build, broadcast or funds movement.
+ */
+export async function getBaseExecutionStateObservation(
+  quote: unknown,
+  options: BaseExecutionStateObservationOptions = {},
+) {
+  const environment = options.environment ?? process.env;
+  const endpoint = environment.BASE_RPC_URL?.trim() ?? "";
+  const configuredWallet = environment.BASE_WALLET_ADDRESS?.trim() ?? "";
+  if (!validHttpUrl(endpoint) || !validAddress(configuredWallet)) {
+    throw new BaseExecutionStateObservationError("BASE_WALLET_CONFIGURATION_MISSING");
+  }
+
+  const parsedQuote = quoteSchema.safeParse(quote);
+  const nowMs = options.nowMs ?? Date.now();
+  if (!parsedQuote.success || !Number.isSafeInteger(nowMs) || nowMs <= 0) {
+    throw new BaseExecutionStateObservationError("BASE_EXECUTION_STATE_INPUT_INVALID");
+  }
+
+  const walletAddress = configuredWallet.toLowerCase();
+  const routerAddress = parsedQuote.data.routerAddress;
+  const payload = [
+    { jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] },
+    { jsonrpc: "2.0", id: 2, method: "eth_getBlockByNumber", params: ["latest", false] },
+    { jsonrpc: "2.0", id: 3, method: "eth_getCode", params: [walletAddress, "latest"] },
+    {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "eth_call",
+      params: [{ to: BASE_USDC_ADDRESS, data: allowanceData(walletAddress, routerAddress) }, "latest"],
+    },
+  ];
+
+  // One batch POST. No retry, polling, cache or persistence.
+  let response: Response;
+  try {
+    response = await (options.fetchImpl ?? fetch)(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    throw new BaseExecutionStateObservationError("BASE_RPC_UNAVAILABLE");
+  }
+  if (!response.ok) throw new BaseExecutionStateObservationError("BASE_RPC_UNAVAILABLE");
+
+  let replies: RpcReply[];
+  try {
+    const value = await response.json();
+    if (!Array.isArray(value)) throw new Error("not a batch");
+    replies = value as RpcReply[];
+  } catch {
+    throw new BaseExecutionStateObservationError("BASE_RPC_INVALID_RESPONSE");
+  }
+
+  const chainId = quantityBigInt(requiredResult(replies, 1));
+  if (chainId !== BigInt(BASE_CHAIN_ID)) {
+    throw new BaseExecutionStateObservationError("BASE_RPC_WRONG_CHAIN");
+  }
+
+  const block = requiredResult(replies, 2);
+  if (typeof block !== "object" || block === null) {
+    throw new BaseExecutionStateObservationError("BASE_RPC_INVALID_RESPONSE");
+  }
+  const blockRecord = block as Record<string, unknown>;
+  const blockNumber = quantityBigInt(blockRecord.number);
+  const blockTimestamp = quantityBigInt(blockRecord.timestamp);
+  const code = codeData(requiredResult(replies, 3));
+  const allowance = uint256ReturnData(requiredResult(replies, 4));
+  if (blockNumber === null || blockTimestamp === null || code === null || allowance === null) {
+    throw new BaseExecutionStateObservationError("BASE_RPC_INVALID_RESPONSE");
+  }
+
+  const nowSeconds = BigInt(Math.floor(nowMs / 1_000));
+  if (
+    blockTimestamp > nowSeconds + BigInt(MAX_FUTURE_BLOCK_SECONDS) ||
+    nowSeconds - blockTimestamp > BigInt(MAX_BLOCK_AGE_SECONDS)
+  ) {
+    throw new BaseExecutionStateObservationError("BASE_RPC_STALE_BLOCK");
+  }
+
+  // An EIP-7702 delegated EOA is not a deployed Smart Account.
+  if (EIP7702_DELEGATION_PATTERN.test(code)) {
+    throw new BaseExecutionStateObservationError("BASE_EXECUTION_STATE_UNEXPECTED_CODE");
+  }
+
+  // Compare integer units directly; never via number.
+  const sellLegInputUsdcUnits = BigInt(parsedQuote.data.buyMinimumOutUsdcUnits);
+
+  return {
+    mode: "paper" as const,
+    executionLocked: true as const,
+    status: "observed" as const,
+    readiness: "blocked" as const,
+    chainId: BASE_CHAIN_ID,
+    walletAddress,
+    routerAddress,
+    usdcAddress: BASE_USDC_ADDRESS,
+    smartAccountDeployed: code !== "0x",
+    usdcAllowanceUnits: allowance.toString(),
+    // BUY leg input is native ETH, which has no ERC-20 allowance.
+    buyLegAllowanceRequired: false as const,
+    sellLegInputUsdcUnits: sellLegInputUsdcUnits.toString(),
+    sellLegAllowanceCovered: allowance >= sellLegInputUsdcUnits,
+    blockNumber: blockNumber.toString(),
+    blockTimestampMs: Number(blockTimestamp) * 1_000,
+    observedAtMs: nowMs,
+    rpcRequests: 1 as const,
+  };
+}
