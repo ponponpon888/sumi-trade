@@ -49,7 +49,8 @@ function validAddress(value: string): boolean {
   return /^0x[0-9a-f]{40}$/i.test(value) && !/^0x0{40}$/i.test(value);
 }
 
-function hexBigInt(value: unknown): bigint | null {
+// JSON-RPC quantity (chainId, block number, timestamp, eth_getBalance): no leading zeros.
+function quantityBigInt(value: unknown): bigint | null {
   if (typeof value !== "string" || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(value)) {
     return null;
   }
@@ -58,6 +59,14 @@ function hexBigInt(value: unknown): bigint | null {
   } catch {
     return null;
   }
+}
+
+// eth_call ABI uint256 return data: exactly 32 bytes (64 hex digits).
+function uint256ReturnData(value: unknown): bigint | null {
+  if (typeof value !== "string" || !/^0x[0-9a-f]{64}$/i.test(value)) {
+    return null;
+  }
+  return BigInt(value);
 }
 
 function requiredResult(replies: RpcReply[], id: number): unknown {
@@ -117,7 +126,7 @@ export async function getBaseWalletObservation(options: ObservationOptions = {})
     throw new BaseWalletObservationError("BASE_RPC_INVALID_RESPONSE");
   }
 
-  const chainId = hexBigInt(requiredResult(replies, 1));
+  const chainId = quantityBigInt(requiredResult(replies, 1));
   if (chainId !== BigInt(BASE_CHAIN_ID)) {
     throw new BaseWalletObservationError("BASE_RPC_WRONG_CHAIN");
   }
@@ -127,10 +136,10 @@ export async function getBaseWalletObservation(options: ObservationOptions = {})
     throw new BaseWalletObservationError("BASE_RPC_INVALID_RESPONSE");
   }
   const blockRecord = block as Record<string, unknown>;
-  const blockNumber = hexBigInt(blockRecord.number);
-  const blockTimestamp = hexBigInt(blockRecord.timestamp);
-  const nativeBalance = hexBigInt(requiredResult(replies, 3));
-  const usdcBalance = hexBigInt(requiredResult(replies, 4));
+  const blockNumber = quantityBigInt(blockRecord.number);
+  const blockTimestamp = quantityBigInt(blockRecord.timestamp);
+  const nativeBalance = quantityBigInt(requiredResult(replies, 3));
+  const usdcBalance = uint256ReturnData(requiredResult(replies, 4));
   if (blockNumber === null || blockTimestamp === null || nativeBalance === null || usdcBalance === null) {
     throw new BaseWalletObservationError("BASE_RPC_INVALID_RESPONSE");
   }

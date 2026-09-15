@@ -7,6 +7,8 @@ import {
 
 const NOW_MS = 1_789_430_700_000;
 const WALLET = "0x1111111111111111111111111111111111111111";
+const USDC_50_RETURN_DATA = `0x${"2faf080".padStart(64, "0")}`;
+const USDC_ZERO_RETURN_DATA = `0x${"0".repeat(64)}`;
 
 function environment(overrides: {
   BASE_RPC_URL?: string;
@@ -22,7 +24,7 @@ function environment(overrides: {
 function validReplies() {
   const nowSeconds = Math.floor(NOW_MS / 1_000);
   return [
-    { jsonrpc: "2.0", id: 4, result: "0x2faf080" },
+    { jsonrpc: "2.0", id: 4, result: USDC_50_RETURN_DATA },
     { jsonrpc: "2.0", id: 2, result: { number: "0x1e240", timestamp: `0x${nowSeconds.toString(16)}` } },
     { jsonrpc: "2.0", id: 1, result: "0x2105" },
     { jsonrpc: "2.0", id: 3, result: "0xde0b6b3a7640000" },
@@ -110,6 +112,45 @@ describe("Base wallet observation", () => {
       nowMs: NOW_MS,
       environment: environment(),
     })).rejects.toMatchObject({ code: "BASE_RPC_STALE_BLOCK" });
+  });
+
+  it.each([
+    [USDC_ZERO_RETURN_DATA, "0"],
+    [USDC_50_RETURN_DATA, "50000000"],
+  ])("accepts 32-byte ABI uint256 USDC balanceOf return data %s", async (returnData, units) => {
+    const replies = validReplies().map((reply) => reply.id === 4 ? { ...reply, result: returnData } : reply);
+    const fetchImpl = vi.fn(async () => rpcResponse(replies));
+    const result = await getBaseWalletObservation({
+      fetchImpl,
+      nowMs: NOW_MS,
+      environment: environment(),
+    });
+    expect(result).toMatchObject({
+      mode: "paper",
+      executionLocked: true,
+      readiness: "blocked",
+      usdcBalanceUnits: units,
+      rpcRequests: 1,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["31 bytes", `0x${"0".repeat(62)}`],
+    ["33 bytes", `0x${"0".repeat(66)}`],
+    ["non-hex digit", `0x${"0".repeat(63)}g`],
+    ["quantity zero", "0x0"],
+    ["quantity without padding", "0x2faf080"],
+    ["missing 0x prefix", "0".repeat(64)],
+  ])("rejects USDC balanceOf return data that is not a 32-byte uint256 (%s)", async (_label, returnData) => {
+    const replies = validReplies().map((reply) => reply.id === 4 ? { ...reply, result: returnData } : reply);
+    const fetchImpl = vi.fn(async () => rpcResponse(replies));
+    await expect(getBaseWalletObservation({
+      fetchImpl,
+      nowMs: NOW_MS,
+      environment: environment(),
+    })).rejects.toMatchObject({ code: "BASE_RPC_INVALID_RESPONSE" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it.each([
