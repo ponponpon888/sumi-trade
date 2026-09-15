@@ -96,4 +96,63 @@ describe("authenticated Base paper preflight route", () => {
     });
     expect(text).not.toContain("secret");
   });
+
+  it("passes execution state fields through unchanged", async () => {
+    const body = {
+      mode: "paper",
+      executionLocked: true,
+      profitabilityVerified: false,
+      status: "blocked",
+      readiness: "blocked",
+      reserveSufficient: null,
+      rpcRequests: 1,
+      walletRpcRequests: 1,
+      executionStateRpcRequests: 1,
+      totalRpcRequests: 2,
+      externalHttpRequests: 5,
+      routerAddress: "0x2222222222222222222222222222222222222222",
+      smartAccountDeployed: false,
+      usdcAllowanceUnits: "0",
+      buyLegAllowanceRequired: false,
+      sellLegInputUsdcUnits: "2487500",
+      sellLegAllowanceCovered: false,
+      blockReasons: [
+        "INSUFFICIENT_NATIVE_BALANCE", "SMART_ACCOUNT_UNDEPLOYED", "SELL_ALLOWANCE_INSUFFICIENT",
+        "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE",
+      ],
+      incompleteChecks: [
+        "L1_FEE_COVERAGE_UNVERIFIED", "TOKEN_APPROVAL_COST_UNVERIFIED", "SIGNER_FEES_UNVERIFIED",
+        "EXECUTION_VALUATION_UNVERIFIED", "SMART_ACCOUNT_DEPLOYMENT_COST_UNVERIFIED",
+      ],
+    };
+    getPreflight.mockResolvedValueOnce(body);
+    const result = await GET(authenticated());
+    expect(result.status).toBe(200);
+    expect(result.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await result.json()).toEqual(body);
+  });
+
+  it.each([
+    ["BASE_EXECUTION_STATE_UNAVAILABLE", "BASE_RPC_STALE_BLOCK", "BASE_RPC_STALE_BLOCK"],
+    ["BASE_EXECUTION_STATE_UNAVAILABLE", "BASE_EXECUTION_STATE_UNEXPECTED_CODE", "BASE_EXECUTION_STATE_UNEXPECTED_CODE"],
+    ["BASE_EXECUTION_STATE_UNAVAILABLE", "https://rpc.example/private-secret", null],
+    ["PREFLIGHT_INVALID_OBSERVATION", "BASE_EXECUTION_STATE_INPUT_INVALID", "BASE_EXECUTION_STATE_INPUT_INVALID"],
+    ["PREFLIGHT_OBSERVATION_MISMATCH", "BASE_RPC_STALE_BLOCK", null],
+  ] as const)("returns stable execution state failure %s with source %s", async (code, source, expected) => {
+    getPreflight.mockRejectedValueOnce(new BasePaperPreflightError(code, source));
+    const result = await GET(authenticated());
+    const text = await result.text();
+    expect(result.status).toBe(503);
+    expect(result.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(JSON.parse(text)).toEqual({
+      mode: "paper",
+      executionLocked: true,
+      profitabilityVerified: false,
+      readiness: "blocked",
+      status: "unavailable",
+      error: code,
+      sourceError: expected,
+    });
+    expect(text).not.toContain("secret");
+  });
 });
