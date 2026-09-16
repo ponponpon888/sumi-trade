@@ -4,6 +4,10 @@ import {
   BaseExecutionStateObservationError,
   type BaseExecutionStateObservationErrorCode,
 } from "@/lib/base-execution-state-observation";
+import {
+  BaseFundingPlanningError,
+  evaluateBaseFundingPlanning,
+} from "@/lib/base-funding-planning";
 import { BasePaperQuoteError } from "@/lib/base-paper-quote";
 import {
   BasePaperPreflightError,
@@ -49,6 +53,42 @@ const COVERED_ALLOWANCE_CHECKS = [
   "SIGNER_FEES_UNVERIFIED",
   "EXECUTION_VALUATION_UNVERIFIED",
 ];
+const ETH_JPY = 500_000; // REQUIRED_WEI is exactly 500 JPY at this valuation; 1 JPY = 2e12 wei.
+const KNOWN_COST_YEN = 7;
+const PROVIDER_COST_YEN = 9;
+const PROVIDER_COST_WEI = "18000000000000"; // 9 * 2e12
+const KNOWN_COST_WEI = "14000000000000"; // 7 * 2e12
+const REFERENCE_WITH_PROVIDER = "1018000000000000";
+const REFERENCE_WITHOUT_PROVIDER = "1014000000000000";
+const ALWAYS_UNPRICED = [
+  "USER_OPERATION_GAS",
+  "BUNDLER_FEE",
+  "PAYMASTER_FEE",
+  "SIGNER_FEE",
+  "BUNDLE_L1_FEE_ALLOCATION",
+  "EXECUTION_TIME_OPERATOR_FEE",
+  "PRICE_AND_GAS_MOVEMENT",
+];
+// Default fixture: zero balance, deployed account, covered allowance, provider total present.
+const FUNDING_PLANNING = {
+  totalCapitalLimitYen: 10_000,
+  perTradeLimitYen: 1_000,
+  capitalBudgetEvaluated: false,
+  policyReserveYen: null,
+  requestedYen: 500,
+  principalWei: REQUIRED_WEI,
+  nativeBalanceWei: "0",
+  principalShortfallWei: REQUIRED_WEI,
+  costBasis: "WITH_PROVIDER_L1_FEE",
+  estimatedKnownCostYen: PROVIDER_COST_YEN,
+  estimatedKnownCostWei: PROVIDER_COST_WEI,
+  estimatedFundingReferenceWei: REFERENCE_WITH_PROVIDER,
+  estimatedFundingReferenceGapWei: REFERENCE_WITH_PROVIDER,
+  planningTargetWei: null,
+  planningShortfallWei: null,
+  fundingSufficient: null,
+  unpricedCosts: ALWAYS_UNPRICED,
+};
 
 function quote(overrides: Record<string, unknown> = {}) {
   return {
@@ -63,6 +103,16 @@ function quote(overrides: Record<string, unknown> = {}) {
     quoteExpiresAtMs: NOW + 10_000,
     routerAddress: ROUTER,
     buyMinimumOutUsdcUnits: SELL_INPUT,
+    // Mirrors the real quote, including members preflight must ignore rather than forward.
+    valuation: {
+      provider: "coingecko",
+      ethJpy: ETH_JPY,
+      ethUsd: 2_500,
+      valuationAtMs: NOW - 30_000,
+      maxAgeMs: 180_000,
+    },
+    knownCostEstimateYen: KNOWN_COST_YEN,
+    providerKnownCostEstimateYen: PROVIDER_COST_YEN,
     incompleteChecks: [
       "L1_FEE_COVERAGE_UNVERIFIED", "TOKEN_APPROVAL_COST_UNVERIFIED",
       "SIGNER_FEES_UNVERIFIED", "WALLET_BALANCE_UNVERIFIED",
@@ -177,6 +227,7 @@ describe("unsigned Base paper preflight", () => {
       feeParameters: FEE_PARAMETERS,
       blockReasons: ["INSUFFICIENT_NATIVE_BALANCE", "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE"],
       incompleteChecks: COVERED_ALLOWANCE_CHECKS,
+      fundingPlanning: FUNDING_PLANNING,
     });
     expect(getQuote).toHaveBeenCalledTimes(1);
     expect(getQuote).toHaveBeenCalledWith(500);
@@ -725,5 +776,219 @@ describe("unsigned Base paper preflight", () => {
     const { dependencies } = fixture(quote(), wallet(), () => NOW, executionState(overrides));
     const error = await rejection(getBasePaperPreflight(500, dependencies));
     expect(error).toMatchObject({ code: "PREFLIGHT_OBSERVATION_MISMATCH", sourceCode: null });
+  });
+
+  it("passes the already validated observation into funding planning exactly once", async () => {
+    const evaluateFundingPlanning = vi.fn(evaluateBaseFundingPlanning);
+    const { getQuote, getWallet, getExecutionState } = fixture();
+    const result = await getBasePaperPreflight(500, {
+      getQuote, getWallet, getExecutionState, now: () => NOW, evaluateFundingPlanning,
+    });
+
+    expect(evaluateFundingPlanning).toHaveBeenCalledTimes(1);
+    expect(evaluateFundingPlanning).toHaveBeenCalledWith({
+      requestedYen: 500,
+      principalWei: REQUIRED_WEI,
+      nativeBalanceWei: "0",
+      ethJpy: ETH_JPY,
+      knownCostEstimateYen: KNOWN_COST_YEN,
+      providerKnownCostEstimateYen: PROVIDER_COST_YEN,
+      smartAccountDeployed: true,
+      sellLegAllowanceCovered: true,
+    });
+    expect(result.fundingPlanning).toEqual(FUNDING_PLANNING);
+  });
+
+  it("uses the recomputed allowance comparison, not the reported one", async () => {
+    const evaluateFundingPlanning = vi.fn(evaluateBaseFundingPlanning);
+    const { getQuote, getWallet } = fixture();
+    const getExecutionState = vi.fn(async () => stateWith(false, "0"));
+    await getBasePaperPreflight(500, {
+      getQuote, getWallet, getExecutionState, now: () => NOW, evaluateFundingPlanning,
+    });
+    expect(evaluateFundingPlanning).toHaveBeenCalledWith(
+      expect.objectContaining({ smartAccountDeployed: false, sellLegAllowanceCovered: false }),
+    );
+  });
+
+  it.each([
+    ["zero balance", "0", REQUIRED_WEI, REFERENCE_WITH_PROVIDER],
+    ["one wei short of the principal", (BigInt(REQUIRED_WEI) - BigInt(1)).toString(), "1", "18000000000001"],
+    ["exactly the principal", REQUIRED_WEI, "0", PROVIDER_COST_WEI],
+    ["above the principal", (BigInt(REQUIRED_WEI) + BigInt(1)).toString(), "0", "17999999999999"],
+    ["exactly the reference figure", REFERENCE_WITH_PROVIDER, "0", "0"],
+  ])("settles only the principal shortfall for %s", async (_label, nativeBalanceWei, shortfall, gap) => {
+    const { dependencies } = fixture(quote(), wallet({ nativeBalanceWei }));
+    const result = await getBasePaperPreflight(500, dependencies);
+
+    expect(result.fundingPlanning.principalShortfallWei).toBe(shortfall);
+    expect(result.fundingPlanning.estimatedFundingReferenceGapWei).toBe(gap);
+    // Reaching or passing the reference figure proves nothing: it is not a sufficiency test.
+    expect(result.fundingPlanning.fundingSufficient).toBeNull();
+    expect(result.fundingPlanning.unpricedCosts.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({
+      executionLocked: true, profitabilityVerified: false,
+      status: "blocked", readiness: "blocked", reserveSufficient: null,
+    });
+  });
+
+  it.each([
+    ["provider total present", PROVIDER_COST_YEN, "WITH_PROVIDER_L1_FEE", PROVIDER_COST_YEN, PROVIDER_COST_WEI, REFERENCE_WITH_PROVIDER, false],
+    ["provider total absent", null, "WITHOUT_PROVIDER_L1_FEE", KNOWN_COST_YEN, KNOWN_COST_WEI, REFERENCE_WITHOUT_PROVIDER, true],
+  ])("switches the cost basis when the %s", async (
+    _label, providerKnownCostEstimateYen, costBasis, yen, wei, reference, listsProviderL1Fee,
+  ) => {
+    const { dependencies } = fixture(quote({ providerKnownCostEstimateYen }));
+    const result = await getBasePaperPreflight(500, dependencies);
+
+    expect(result.fundingPlanning).toMatchObject({
+      costBasis, estimatedKnownCostYen: yen, estimatedKnownCostWei: wei,
+      estimatedFundingReferenceWei: reference,
+    });
+    // A missing provider L1 fee is reported as unpriced, never counted as zero.
+    expect(result.fundingPlanning.unpricedCosts.includes("PROVIDER_L1_FEE")).toBe(listsProviderL1Fee);
+  });
+
+  it("keeps a zero provider total on the provider basis", async () => {
+    const { dependencies } = fixture(quote({ providerKnownCostEstimateYen: 0 }));
+    const result = await getBasePaperPreflight(500, dependencies);
+    expect(result.fundingPlanning).toMatchObject({
+      costBasis: "WITH_PROVIDER_L1_FEE",
+      estimatedKnownCostYen: 0,
+      estimatedKnownCostWei: "0",
+      estimatedFundingReferenceWei: REQUIRED_WEI,
+    });
+    expect(result.fundingPlanning.unpricedCosts).not.toContain("PROVIDER_L1_FEE");
+  });
+
+  it.each([
+    ["deployed and covered", true, SELL_INPUT, ALWAYS_UNPRICED],
+    ["undeployed and covered", false, SELL_INPUT, ["SMART_ACCOUNT_DEPLOYMENT", ...ALWAYS_UNPRICED]],
+    ["deployed and uncovered", true, "0", [
+      "USER_OPERATION_GAS", "BUNDLER_FEE", "PAYMASTER_FEE", "SIGNER_FEE", "APPROVAL_TRANSACTION",
+      "BUNDLE_L1_FEE_ALLOCATION", "EXECUTION_TIME_OPERATOR_FEE", "PRICE_AND_GAS_MOVEMENT",
+    ]],
+    ["undeployed and uncovered", false, "0", [
+      "SMART_ACCOUNT_DEPLOYMENT", "USER_OPERATION_GAS", "BUNDLER_FEE", "PAYMASTER_FEE", "SIGNER_FEE",
+      "APPROVAL_TRANSACTION", "BUNDLE_L1_FEE_ALLOCATION", "EXECUTION_TIME_OPERATOR_FEE",
+      "PRICE_AND_GAS_MOVEMENT",
+    ]],
+  ])("lists the unpriced costs for an account that is %s", async (_label, deployed, allowance, expected) => {
+    const { dependencies } = fixture(quote(), wallet(), () => NOW, stateWith(deployed, allowance));
+    const result = await getBasePaperPreflight(500, dependencies);
+    expect(result.fundingPlanning.unpricedCosts).toEqual(expected);
+  });
+
+  it.each([
+    ["deployed and covered", true, SELL_INPUT],
+    ["undeployed and uncovered", false, "0"],
+  ])("never changes the existing verdict because of funding planning: %s", async (_label, deployed, allowance) => {
+    const stateValue = stateWith(deployed, allowance);
+    const { dependencies } = fixture(quote(), wallet(), () => NOW, stateValue);
+    const result = await getBasePaperPreflight(500, dependencies);
+
+    const expectedReasons = deployed
+      ? ["INSUFFICIENT_NATIVE_BALANCE", "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE"]
+      : ["INSUFFICIENT_NATIVE_BALANCE", "SMART_ACCOUNT_UNDEPLOYED", "SELL_ALLOWANCE_INSUFFICIENT",
+        "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE"];
+    const expectedChecks = deployed
+      ? COVERED_ALLOWANCE_CHECKS
+      : [...REMAINING_CHECKS, DEPLOYMENT_CHECK];
+    expect(result.blockReasons).toEqual(expectedReasons);
+    expect(result.incompleteChecks).toEqual(expectedChecks);
+    expect(result.incompleteChecks).toContain("L1_FEE_COVERAGE_UNVERIFIED");
+    expect(result.incompleteChecks).toContain("EXECUTION_VALUATION_UNVERIFIED");
+    expect(result).toMatchObject({
+      mode: "paper", executionLocked: true, profitabilityVerified: false,
+      status: "blocked", readiness: "blocked", reserveSufficient: null,
+      rpcRequests: 1, walletRpcRequests: 1, executionStateRpcRequests: 1,
+      totalRpcRequests: 2, externalHttpRequests: 5,
+    });
+    expect(result.fundingPlanning).toMatchObject({
+      fundingSufficient: null, planningTargetWei: null,
+      planningShortfallWei: null, policyReserveYen: null,
+      capitalBudgetEvaluated: false, totalCapitalLimitYen: 10_000, perTradeLimitYen: 1_000,
+    });
+  });
+
+  it("plans the 1000 yen amount from its own principal", async () => {
+    const principal = "2000000000000000";
+    const { dependencies } = fixture(quote({ requestedYen: 1000, amountInWei: principal }));
+    const result = await getBasePaperPreflight(1000, dependencies);
+
+    expect(result.fundingPlanning).toMatchObject({
+      requestedYen: 1000,
+      principalWei: principal,
+      principalShortfallWei: principal,
+      estimatedKnownCostWei: PROVIDER_COST_WEI,
+      estimatedFundingReferenceWei: "2018000000000000",
+      perTradeLimitYen: 1_000,
+      fundingSufficient: null,
+    });
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ["valuation missing", { valuation: undefined }],
+    ["valuation null", { valuation: null }],
+    ["valuation not an object", { valuation: "500000" }],
+    ["ethJpy missing", { valuation: { provider: "coingecko" } }],
+    ["ethJpy zero", { valuation: { ethJpy: 0 } }],
+    ["ethJpy negative", { valuation: { ethJpy: -500_000 } }],
+    ["ethJpy NaN", { valuation: { ethJpy: Number.NaN } }],
+    ["ethJpy Infinity", { valuation: { ethJpy: Number.POSITIVE_INFINITY } }],
+    ["ethJpy string", { valuation: { ethJpy: "500000" } }],
+    ["ethJpy null", { valuation: { ethJpy: null } }],
+    ["knownCostEstimateYen missing", { knownCostEstimateYen: undefined }],
+    ["knownCostEstimateYen null", { knownCostEstimateYen: null }],
+    ["knownCostEstimateYen negative", { knownCostEstimateYen: -1 }],
+    ["knownCostEstimateYen decimal", { knownCostEstimateYen: 1.5 }],
+    ["knownCostEstimateYen NaN", { knownCostEstimateYen: Number.NaN }],
+    ["knownCostEstimateYen Infinity", { knownCostEstimateYen: Number.POSITIVE_INFINITY }],
+    ["knownCostEstimateYen beyond safe integers", { knownCostEstimateYen: Number.MAX_SAFE_INTEGER + 1 }],
+    ["knownCostEstimateYen string", { knownCostEstimateYen: "7" }],
+    ["providerKnownCostEstimateYen missing", { providerKnownCostEstimateYen: undefined }],
+    ["providerKnownCostEstimateYen negative", { providerKnownCostEstimateYen: -1 }],
+    ["providerKnownCostEstimateYen decimal", { providerKnownCostEstimateYen: 1.5 }],
+    ["providerKnownCostEstimateYen NaN", { providerKnownCostEstimateYen: Number.NaN }],
+    ["providerKnownCostEstimateYen Infinity", { providerKnownCostEstimateYen: Number.POSITIVE_INFINITY }],
+    ["providerKnownCostEstimateYen beyond safe integers", { providerKnownCostEstimateYen: Number.MAX_SAFE_INTEGER + 1 }],
+    ["providerKnownCostEstimateYen string", { providerKnownCostEstimateYen: "9" }],
+  ])("fails closed on a quote that cannot fund planning: %s", async (_label, overrides) => {
+    const { getExecutionState, dependencies } = fixture(quote(overrides));
+    const error = await rejection(getBasePaperPreflight(500, dependencies));
+    expect(error).toMatchObject({ code: "PREFLIGHT_INVALID_OBSERVATION", sourceCode: null });
+    // The quote is validated before any execution state work begins.
+    expect(getExecutionState).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a funding planning error", new BaseFundingPlanningError("FUNDING_PLANNING_OVERFLOW")],
+    ["an unexpected error", new Error("private secret detail")],
+    ["a thrown string", "secret string"],
+  ])("converts %s into an invalid observation without leaking it", async (_label, reason) => {
+    const evaluateFundingPlanning = vi.fn(() => { throw reason; });
+    const { getQuote, getWallet, getExecutionState } = fixture();
+    const error = await rejection(getBasePaperPreflight(500, {
+      getQuote, getWallet, getExecutionState, now: () => NOW, evaluateFundingPlanning,
+    }));
+
+    expect(error).toMatchObject({ code: "PREFLIGHT_INVALID_OBSERVATION", sourceCode: null });
+    expect(error.message).toBe("PREFLIGHT_INVALID_OBSERVATION");
+    const serialized = JSON.stringify({ ...error, message: error.message });
+    expect(serialized).not.toContain("secret");
+    expect(serialized).not.toContain("OVERFLOW");
+    expect(evaluateFundingPlanning).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns no deposit instruction, destination, link or calldata", async () => {
+    const { dependencies } = fixture();
+    const serialized = JSON.stringify(await getBasePaperPreflight(500, dependencies));
+    for (const forbidden of [
+      "requiredDeposit", "minimumDeposit", "recommendedDeposit", "requiredFunding",
+      "depositAddress", "sendTo", "transferTo", "qrCode", "paymentLink",
+      "calldata", "secret", "http", "observedFundingFloor", "knownFundingFloor",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 });

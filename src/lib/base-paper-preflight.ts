@@ -7,6 +7,11 @@ import {
   type BaseExecutionStateObservationErrorCode,
   getBaseExecutionStateObservation,
 } from "@/lib/base-execution-state-observation";
+import {
+  type BaseFundingPlanningInput,
+  type BaseFundingPlanningResult,
+  evaluateBaseFundingPlanning,
+} from "@/lib/base-funding-planning";
 import { BasePaperQuoteError, getBasePaperQuote } from "@/lib/base-paper-quote";
 import {
   BaseWalletObservationError,
@@ -132,6 +137,8 @@ function boundedUnitsSchema(maximum: bigint) {
 const positiveUnitsSchema = unitsSchema.refine((value) => value !== "0");
 const lowercaseAddressSchema = z.string().regex(/^0x[0-9a-f]{40}$/).refine((value) => !/^0x0{40}$/.test(value));
 const incompleteChecksSchema = z.array(z.enum(KNOWN_INCOMPLETE_CHECKS));
+// Whole-yen provider estimates. Required as an internal contract: the quote always returns them.
+const wholeYenSchema = z.number().int().nonnegative().safe();
 const quoteSchema = z.object({
   mode: z.literal("paper"),
   executionLocked: z.literal(true),
@@ -144,6 +151,11 @@ const quoteSchema = z.object({
   quoteExpiresAtMs: z.number().int().positive().safe(),
   routerAddress: lowercaseAddressSchema,
   buyMinimumOutUsdcUnits: positiveUnitsSchema,
+  // Only the fields funding planning needs. Other valuation members are ignored, not forwarded.
+  valuation: z.object({ ethJpy: z.number().finite().positive() }),
+  knownCostEstimateYen: wholeYenSchema,
+  // Null when the provider reported no L1 fee. It is never substituted with zero.
+  providerKnownCostEstimateYen: wholeYenSchema.nullable(),
   incompleteChecks: incompleteChecksSchema,
 });
 const walletSchema = z.object({
@@ -196,6 +208,8 @@ export interface BasePaperPreflightDependencies {
   getWallet?: () => Promise<unknown>;
   getExecutionState?: (quote: unknown) => Promise<unknown>;
   now?: () => number;
+  /** Test seam only. Production always uses evaluateBaseFundingPlanning. */
+  evaluateFundingPlanning?: (input: BaseFundingPlanningInput) => BaseFundingPlanningResult;
 }
 
 type BlockReason =
@@ -225,6 +239,7 @@ export async function getBasePaperPreflight(
   const getExecutionState = dependencies.getExecutionState
     ?? ((quote: unknown) => getBaseExecutionStateObservation(quote));
   const now = dependencies.now ?? Date.now;
+  const evaluateFundingPlanning = dependencies.evaluateFundingPlanning ?? evaluateBaseFundingPlanning;
 
   // One attempt each; quote and wallet start in parallel. No retry, polling, cache or persistence.
   const [quoteResult, walletResult] = await Promise.allSettled([
@@ -311,6 +326,27 @@ export async function getBasePaperPreflight(
   );
   if (!smartAccountDeployed) incompleteChecks.push("SMART_ACCOUNT_DEPLOYMENT_COST_UNVERIFIED");
 
+  // Pure arithmetic over values this preflight already validated. Called exactly once, with no
+  // network, clock or storage access. A failure here is an internal inconsistency, not an outage,
+  // so it fails the whole preflight closed rather than degrading to a partial result.
+  let fundingPlanning: BaseFundingPlanningResult;
+  try {
+    fundingPlanning = evaluateFundingPlanning({
+      requestedYen,
+      principalWei: requiredInputWei.toString(),
+      nativeBalanceWei: nativeBalanceWei.toString(),
+      ethJpy: quote.data.valuation.ethJpy,
+      knownCostEstimateYen: quote.data.knownCostEstimateYen,
+      providerKnownCostEstimateYen: quote.data.providerKnownCostEstimateYen,
+      smartAccountDeployed,
+      // The recomputed comparison above, not the value the execution state reported.
+      sellLegAllowanceCovered,
+    });
+  } catch {
+    // No source code, input value, stack or upstream text is carried into the error.
+    throw new BasePaperPreflightError("PREFLIGHT_INVALID_OBSERVATION");
+  }
+
   return {
     mode: "paper" as const,
     executionLocked: true as const,
@@ -343,5 +379,8 @@ export async function getBasePaperPreflight(
     feeParameters: state.data.feeParameters,
     blockReasons,
     incompleteChecks,
+    // Planning figures only. principalShortfallWei is the sole settled shortfall; the reference
+    // figures are for comparison and are never a required, recommended or sufficient deposit.
+    fundingPlanning,
   };
 }
