@@ -43,6 +43,11 @@ SELL legのUSDC allowanceを署名なしで観測する。既存のダッシュ�
   BigInt比較で、preflight側でも再計算し、実行状態の値と一致しなければ拒否する。
 - `routerAddress`はKyberSwapが返したrouterで、固定アドレスとは照合していない。
   読取専用のallowance照会だけに使う。
+- `feeParameters`は実行状態と同じバッチで読んだ観測値。`GasPriceOracle`
+  （`0x420000000000000000000000000000000000000f`）の`l1BaseFee`、`blobBaseFee`、
+  `baseFeeScalar`、`blobBaseFeeScalar`、`isFjord`、`isIsthmus`と、最新ブロックの
+  `baseFeePerGas`。数値は文字列のまま返し、numberへ変換しない。calldataがないため
+  L1費用のカバーは計算できず、`L1_FEE_COVERAGE_UNVERIFIED`は解消しない。
 - 未デプロイやallowance不足は報告するだけで、デプロイ、approve、permit、署名、送信で修復しない。
 - 残高やallowanceが足りても未確認項目が残るため、`status`と`readiness`は常に`blocked`、
   `executionLocked: true`、`profitabilityVerified: false`、`reserveSufficient: null`。

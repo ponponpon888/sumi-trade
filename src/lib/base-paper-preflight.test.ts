@@ -20,6 +20,17 @@ const ROUTER = "0x2222222222222222222222222222222222222222";
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const REQUIRED_WEI = "1000000000000000";
 const SELL_INPUT = "2487500";
+const ORACLE = "0x420000000000000000000000000000000000000f";
+const FEE_PARAMETERS = {
+  oracleAddress: ORACLE,
+  l2BaseFeePerGasWei: "5000000",
+  l1BaseFeeWei: "43830987",
+  blobBaseFeeWei: "2497031",
+  baseFeeScalar: "2269",
+  blobBaseFeeScalar: "1055250",
+  fjord: true,
+  isthmus: true,
+};
 const DEPLOYMENT_CHECK = "SMART_ACCOUNT_DEPLOYMENT_COST_UNVERIFIED";
 const REMAINING_CHECKS = [
   "L1_FEE_COVERAGE_UNVERIFIED",
@@ -87,6 +98,7 @@ function executionState(overrides: Record<string, unknown> = {}) {
     buyLegAllowanceRequired: false,
     sellLegInputUsdcUnits: SELL_INPUT,
     sellLegAllowanceCovered: true,
+    feeParameters: { ...FEE_PARAMETERS },
     blockNumber: "123456",
     blockTimestampMs: NOW,
     observedAtMs: NOW,
@@ -157,6 +169,7 @@ describe("unsigned Base paper preflight", () => {
       buyLegAllowanceRequired: false,
       sellLegInputUsdcUnits: SELL_INPUT,
       sellLegAllowanceCovered: true,
+      feeParameters: FEE_PARAMETERS,
       blockReasons: ["INSUFFICIENT_NATIVE_BALANCE", "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE"],
       incompleteChecks: COVERED_ALLOWANCE_CHECKS,
     });
@@ -611,6 +624,15 @@ describe("unsigned Base paper preflight", () => {
     ["covered reported with zero allowance", executionState({ usdcAllowanceUnits: "0", sellLegAllowanceCovered: true })],
     ["not covered reported with sufficient allowance", executionState({ sellLegAllowanceCovered: false })],
     ["rpcRequests", executionState({ rpcRequests: 2 })],
+    ["feeParameters missing", executionState({ feeParameters: undefined })],
+    ["feeParameters null", executionState({ feeParameters: null })],
+    ["feeParameters oracleAddress", executionState({ feeParameters: { ...FEE_PARAMETERS, oracleAddress: ROUTER } })],
+    ["feeParameters l1BaseFeeWei hex", executionState({ feeParameters: { ...FEE_PARAMETERS, l1BaseFeeWei: "0x1" } })],
+    ["feeParameters l1BaseFeeWei number", executionState({ feeParameters: { ...FEE_PARAMETERS, l1BaseFeeWei: 1 } })],
+    ["feeParameters baseFeeScalar negative", executionState({ feeParameters: { ...FEE_PARAMETERS, baseFeeScalar: "-1" } })],
+    ["feeParameters l2BaseFeePerGasWei decimal", executionState({ feeParameters: { ...FEE_PARAMETERS, l2BaseFeePerGasWei: "1.5" } })],
+    ["feeParameters fjord string", executionState({ feeParameters: { ...FEE_PARAMETERS, fjord: "true" } })],
+    ["feeParameters isthmus missing", executionState({ feeParameters: { ...FEE_PARAMETERS, isthmus: undefined } })],
   ])("fails closed on malformed execution state: %s", async (_label, stateValue) => {
     // Build mocks directly: fixture() defaults would replace an explicit undefined.
     const getQuote = vi.fn(async () => quote());

@@ -16,6 +16,7 @@ import {
 
 const BASE_CHAIN_ID = 8453;
 const BASE_USDC_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const BASE_GAS_PRICE_ORACLE_ADDRESS = "0x420000000000000000000000000000000000000f";
 const MAX_UINT = (BigInt(1) << BigInt(256)) - BigInt(1);
 const UNITS_PATTERN = /^(0|[1-9][0-9]{0,77})$/;
 
@@ -151,6 +152,17 @@ const walletSchema = z.object({
   rpcRequests: z.literal(1),
   incompleteChecks: incompleteChecksSchema,
 });
+// Observed fee inputs. Reported as-is; they never resolve an incomplete check.
+const feeParametersSchema = z.object({
+  oracleAddress: z.literal(BASE_GAS_PRICE_ORACLE_ADDRESS),
+  l2BaseFeePerGasWei: unitsSchema,
+  l1BaseFeeWei: unitsSchema,
+  blobBaseFeeWei: unitsSchema,
+  baseFeeScalar: unitsSchema,
+  blobBaseFeeScalar: unitsSchema,
+  fjord: z.boolean(),
+  isthmus: z.boolean(),
+});
 const executionStateSchema = z.object({
   mode: z.literal("paper"),
   executionLocked: z.literal(true),
@@ -165,6 +177,7 @@ const executionStateSchema = z.object({
   buyLegAllowanceRequired: z.literal(false),
   sellLegInputUsdcUnits: positiveUnitsSchema,
   sellLegAllowanceCovered: z.boolean(),
+  feeParameters: feeParametersSchema,
   rpcRequests: z.literal(1),
 });
 
@@ -316,6 +329,8 @@ export async function getBasePaperPreflight(
     buyLegAllowanceRequired: false as const,
     sellLegInputUsdcUnits: sellLegInputUsdcUnits.toString(),
     sellLegAllowanceCovered,
+    // Observed fee inputs only. They do not prove L1 coverage, gas usage or any total cost.
+    feeParameters: state.data.feeParameters,
     blockReasons,
     incompleteChecks,
   };
