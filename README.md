@@ -173,6 +173,7 @@ The health checker also examines affected-source lists independently of summary 
 ## ドキュメント
 
 - 変更履歴: [CHANGELOG.md](CHANGELOG.md)
+- 安全ゲート一覧: [docs/safety-gates.md](docs/safety-gates.md)
 - Base paper preflight: [docs/base-paper-preflight.md](docs/base-paper-preflight.md)
 - Base funding planning: [docs/base-funding-planning.md](docs/base-funding-planning.md)
 - Base quote observation: [docs/base-quote-observation.md](docs/base-quote-observation.md)
