@@ -84,19 +84,34 @@ function providerEstimate(summary: RouteSummary) {
   };
 }
 
-function decimal(value: string): { numerator: bigint; denominator: bigint } {
-  const parsed = decimalSchema.parse(value);
-  const [whole, fraction = ""] = parsed.split(".");
+function decimalParts(value: string): { numerator: bigint; denominator: bigint } {
+  const [whole, fraction = ""] = value.split(".");
   return {
     numerator: BigInt(whole + fraction),
     denominator: BigInt(10) ** BigInt(fraction.length),
   };
 }
 
+function decimal(value: string): { numerator: bigint; denominator: bigint } {
+  return decimalParts(decimalSchema.parse(value));
+}
+
+// l1FeeUsd allows up to 36 fraction digits, so it cannot reuse the 18-digit decimalSchema.
+function l1FeeDecimal(value: string): { numerator: bigint; denominator: bigint } {
+  return decimalParts(l1FeeUsdSchema.parse(value));
+}
+
 function ceil(numerator: bigint, denominator: bigint): number {
   const rounded = (numerator + denominator - BigInt(1)) / denominator;
   if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) throw new BasePaperQuoteError("INVALID_PROVIDER_DATA");
   return Number(rounded);
+}
+
+// Sums whole yen through BigInt so a total past the safe integer range fails closed.
+function safeSumYen(...values: number[]): number {
+  const total = values.reduce((sum, value) => sum + BigInt(value), BigInt(0));
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new BasePaperQuoteError("INVALID_PROVIDER_DATA");
+  return Number(total);
 }
 
 function checkTime(timestampMs: number, now: number, maxAge: number, code: string) {
@@ -185,17 +200,29 @@ export async function getBasePaperQuote(
     checkTime(valuationAtMs, observedAtMs, PRICE_AGE_MS, "PRICE_STALE");
     checkTime(startedAtMs, observedAtMs, 25_000, "OBSERVATION_EXPIRED");
 
-    function gasYen(value: string): number {
-      const gas = decimal(value);
-      return ceil(gas.numerator * yen.numerator * usd.denominator,
-        gas.denominator * yen.denominator * usd.numerator);
+    function usdToYen(amount: { numerator: bigint; denominator: bigint }): number {
+      return ceil(amount.numerator * yen.numerator * usd.denominator,
+        amount.denominator * yen.denominator * usd.numerator);
     }
-    const buyGasYen = gasYen(buy.data.gasUsd);
-    const sellGasYen = gasYen(sell.data.gasUsd);
+    // A missing or null provider L1 fee stays null; it is never treated as zero.
+    function l1FeeYen(value: string | null | undefined): number | null {
+      return value === null || value === undefined ? null : usdToYen(l1FeeDecimal(value));
+    }
+    const buyGasYen = usdToYen(decimal(buy.data.gasUsd));
+    const sellGasYen = usdToYen(decimal(sell.data.gasUsd));
+    const buyL1FeeYen = l1FeeYen(buy.data.l1FeeUsd);
+    const sellL1FeeYen = l1FeeYen(sell.data.l1FeeUsd);
+    const providerL1FeeTotalYen = buyL1FeeYen === null || sellL1FeeYen === null
+      ? null
+      : safeSumYen(buyL1FeeYen, sellL1FeeYen);
     const lossWei = amountIn > sell.minimumOut ? amountIn - sell.minimumOut : BigInt(0);
     const swapShortfallYen = ceil(lossWei * yen.numerator, WEI * yen.denominator);
     const knownCostEstimateYen = BigInt(swapShortfallYen) + BigInt(buyGasYen) + BigInt(sellGasYen);
     if (knownCostEstimateYen > BigInt(Number.MAX_SAFE_INTEGER)) throw new BasePaperQuoteError("INVALID_PROVIDER_DATA");
+    // Reported separately so knownCostEstimateYen keeps its existing meaning.
+    const providerKnownCostEstimateYen = providerL1FeeTotalYen === null
+      ? null
+      : safeSumYen(Number(knownCostEstimateYen), providerL1FeeTotalYen);
 
     return {
       mode: "paper" as const,
@@ -220,6 +247,10 @@ export async function getBasePaperQuote(
       providerSwapGasEstimateYen: { buy: buyGasYen, sell: sellGasYen },
       swapShortfallEstimateYen: swapShortfallYen,
       knownCostEstimateYen: Number(knownCostEstimateYen),
+      // KyberSwap's reported route L1 fee converted with the same valuation. Reference only:
+      // it excludes Smart Account deployment, UserOperation/bundler, paymaster, signer fees and approvals.
+      providerL1FeeEstimateYen: { buy: buyL1FeeYen, sell: sellL1FeeYen, total: providerL1FeeTotalYen },
+      providerKnownCostEstimateYen,
       totalCostYen: null,
       reserveSufficient: null,
       incompleteChecks: [

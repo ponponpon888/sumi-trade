@@ -19,8 +19,33 @@ HTTP・外部fetchともno-store。ブラウザの自動ポーリングには接
 - KyberSwapのBase専用経路を使用。買いの保守的な出力数量で逆方向を見積もる。
 - 各方向0.5%のスリッページを想定した研究用計算。実発注の承認済み設定ではない。
 - 経路のトークン・数量・元の時刻を検証。10秒超の古い経路は両方向とも拒否。
+- `routerAddress`はroutesの`data.routerAddress`を小文字で返す。0x+40桁の16進数で
+  ゼロアドレス以外のみ受け付け、買いと売りで一致しなければ`QUOTE_MISMATCH`で拒否。
+  固定アドレスとの照合はしていない。表示のみで、approve・署名・送信には使わない。
+- `buyAmountOutUsdcUnits`はスリッページ適用前の買い出力数量。
+  `buyMinimumOutUsdcUnits`は0.5%控除後の最低受取量で、売り見積の入力量でもある。
+- `providerEstimate`は各legのプロバイダー申告値（`gas`・`gasPriceWei`・`gasUsd`・
+  `l1FeeUsd`）を検証済みの文字列のまま返す。形式不正は該当legの
+  `BUY_ROUTE_RESPONSE_INVALID`／`SELL_ROUTE_RESPONSE_INVALID`で拒否。
+- `l1FeeUsd`は欠落・nullならnull、値があれば非負の小数文字列（整数部18桁・小数部36桁まで）。
+  ただし円換算がsafe integerを超える極端な値は`INVALID_PROVIDER_DATA`で拒否する。
+- 円換算の対応は次のとおり。
+  - `gasUsd`は`providerSwapGasEstimateYen`へ円換算し、`knownCostEstimateYen`に含める。
+  - `l1FeeUsd`は`providerL1FeeEstimateYen`へ円換算するが、既存の`knownCostEstimateYen`には
+    含めない。
+  - `l1FeeUsd`を含めた参考合計は`providerKnownCostEstimateYen`として返す。
 - `providerSwapGasEstimateYen`はAPIが返したgasUsdの円換算（切上げ）。確定支払額ではない。
-- `knownCostEstimateYen`は見積の往復目減りとプロバイダーのガス推定の合計。
+- `knownCostEstimateYen`は見積の往復目減りとプロバイダーのガス推定の合計。L1 feeは含めない。
+- `providerL1FeeEstimateYen`は`l1FeeUsd`を、同じETH/JPY・ETH/USD評価値でBigIntの分数として
+  円換算した参考値（切上げ）。`buy`・`sell`・`total`を返す。欠落またはnullなら対応する値は
+  nullで、0とは扱わない。片方でもnullなら`total`もnull。safe integerを超える場合は
+  `INVALID_PROVIDER_DATA`でfail closed。
+- `providerKnownCostEstimateYen`は`knownCostEstimateYen`と`providerL1FeeEstimateYen.total`の
+  合計。`total`がnullならnull。既存の`knownCostEstimateYen`の意味は変えない。
+- `providerL1FeeEstimateYen`はKyberSwap routesレスポンスが報告したroute単位の参考値であり、
+  完全な実行費用ではない。Smart Accountのデプロイ、ERC-4337 UserOperation／bundler、
+  paymaster、signer／CDPサービス料金、approve取引の費用を含むことは確認できていない。
+  そのため`L1_FEE_COVERAGE_UNVERIFIED`は解消しない。
 - `totalCostYen`と`reserveSufficient`は常にnull。L1掲載費の網羅性、承認、署名サービス費、
   残高は未検証であり、500円の予備費で足りるとは判定しない。
 - `readiness: blocked`、`executionLocked: true`を維持。観測成功を取引許可に変換しない。

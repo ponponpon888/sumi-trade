@@ -261,7 +261,6 @@ describe("read-only Base quote observation", () => {
     ["live buy value", BUY_L1_FEE_USD],
     ["live sell value", SELL_L1_FEE_USD],
     ["36 decimals", `0.${"1".repeat(36)}`],
-    ["18-digit integer with 36 decimals", `${"9".repeat(18)}.${"9".repeat(36)}`],
     ["zero", "0"],
   ])("accepts l1FeeUsd %s on both legs as an unchanged string", async (_label, value) => {
     const buy = withField(route(true), "routeSummary", "l1FeeUsd", value);
@@ -331,5 +330,101 @@ describe("read-only Base quote observation", () => {
       expect(options).toMatchObject({ method: "GET", cache: "no-store", redirect: "error" });
       expect(options?.body).toBeUndefined();
     }
+  });
+
+  it("converts the reported L1 fees to yen without changing knownCostEstimateYen", async () => {
+    const { fetcher, dependencies } = fixture();
+    const result = await getBasePaperQuote(500, dependencies);
+    expect(result).toMatchObject({
+      providerL1FeeEstimateYen: { buy: 1, sell: 1, total: 2 },
+      providerKnownCostEstimateYen: 9,
+      knownCostEstimateYen: 7,
+      totalCostYen: null,
+      reserveSufficient: null,
+      executionLocked: true,
+      profitabilityVerified: false,
+      readiness: "blocked",
+    });
+    expect(result.incompleteChecks).toContain("L1_FEE_COVERAGE_UNVERIFIED");
+    expect(result.providerEstimate.buy.l1FeeUsd).toBe(BUY_L1_FEE_USD);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["buy null", null, SELL_L1_FEE_USD, { buy: null, sell: 1, total: null }],
+    ["buy missing", MISSING, SELL_L1_FEE_USD, { buy: null, sell: 1, total: null }],
+    ["sell null", BUY_L1_FEE_USD, null, { buy: 1, sell: null, total: null }],
+    ["sell missing", BUY_L1_FEE_USD, MISSING, { buy: 1, sell: null, total: null }],
+    ["both null", null, null, { buy: null, sell: null, total: null }],
+  ])("keeps an absent L1 fee null instead of zero (%s)", async (_label, buyFee, sellFee, expected) => {
+    const buy = withField(route(true), "routeSummary", "l1FeeUsd", buyFee);
+    const sell = withField(route(false), "routeSummary", "l1FeeUsd", sellFee);
+    const { dependencies } = fixture([price(), buy, sell]);
+    const result = await getBasePaperQuote(500, dependencies);
+    expect(result.providerL1FeeEstimateYen).toEqual(expected);
+    expect(result.providerKnownCostEstimateYen).toBeNull();
+    expect(result.knownCostEstimateYen).toBe(7);
+  });
+
+  it("reports a zero L1 fee as zero yen", async () => {
+    const buy = withField(route(true), "routeSummary", "l1FeeUsd", "0");
+    const sell = withField(route(false), "routeSummary", "l1FeeUsd", "0");
+    const { dependencies } = fixture([price(), buy, sell]);
+    const result = await getBasePaperQuote(500, dependencies);
+    expect(result.providerL1FeeEstimateYen).toEqual({ buy: 0, sell: 0, total: 0 });
+    expect(result.providerKnownCostEstimateYen).toBe(7);
+  });
+
+  it("rounds a sub-yen L1 fee up instead of down to zero", async () => {
+    const { dependencies } = fixture();
+    const result = await getBasePaperQuote(500, dependencies);
+    // 0.000010504194855782713 USD at 200 JPY/USD is far below 1 yen.
+    expect(result.providerL1FeeEstimateYen.buy).toBe(1);
+  });
+
+  it("converts 36 fraction digits exactly", async () => {
+    const value = `0.${"1".repeat(36)}`;
+    const buy = withField(route(true), "routeSummary", "l1FeeUsd", value);
+    const sell = withField(route(false), "routeSummary", "l1FeeUsd", value);
+    const { dependencies } = fixture([price(), buy, sell]);
+    const result = await getBasePaperQuote(500, dependencies);
+    // 0.111...111 USD * 200 JPY/USD = 22.222...; ceiling is 23 per leg.
+    expect(result.providerL1FeeEstimateYen).toEqual({ buy: 23, sell: 23, total: 46 });
+    expect(result.providerKnownCostEstimateYen).toBe(53);
+  });
+
+  it("uses exact decimal arithmetic rather than floating point", async () => {
+    const value = `1.${"0".repeat(35)}1`;
+    // Double precision drops the final digit, so a Number-based conversion would report 200.
+    expect(Number(value)).toBe(1);
+    expect(Number(value) * 200).toBe(200);
+    const buy = withField(route(true), "routeSummary", "l1FeeUsd", value);
+    const sell = withField(route(false), "routeSummary", "l1FeeUsd", "0");
+    const { dependencies } = fixture([price(), buy, sell]);
+    const result = await getBasePaperQuote(500, dependencies);
+    expect(result.providerL1FeeEstimateYen).toEqual({ buy: 201, sell: 0, total: 201 });
+  });
+
+  it("accepts a total at the safe integer boundary", async () => {
+    // 45035996273704.92 USD * 200 = 9007199254740984 yen; plus knownCostEstimateYen 7 = MAX_SAFE_INTEGER.
+    const buy = withField(route(true), "routeSummary", "l1FeeUsd", "45035996273704.92");
+    const sell = withField(route(false), "routeSummary", "l1FeeUsd", "0");
+    const { dependencies } = fixture([price(), buy, sell]);
+    const result = await getBasePaperQuote(500, dependencies);
+    expect(result.providerL1FeeEstimateYen).toEqual({ buy: 9007199254740984, sell: 0, total: 9007199254740984 });
+    expect(result.providerKnownCostEstimateYen).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it.each([
+    ["single leg above the safe integer range", "45035996273704.96", "0"],
+    ["total above the safe integer range", "45035996273704.92", "0.005"],
+    // Accepted as a string before this change; the yen conversion now rejects it.
+    ["18-digit integer with 36 decimals", `${"9".repeat(18)}.${"9".repeat(36)}`, "0"],
+  ])("fails closed when the yen conversion exceeds safe integers (%s)", async (_label, buyFee, sellFee) => {
+    const buy = withField(route(true), "routeSummary", "l1FeeUsd", buyFee);
+    const sell = withField(route(false), "routeSummary", "l1FeeUsd", sellFee);
+    const { fetcher, dependencies } = fixture([price(), buy, sell]);
+    await expect(getBasePaperQuote(500, dependencies)).rejects.toMatchObject({ code: "INVALID_PROVIDER_DATA" });
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 });
