@@ -30,6 +30,7 @@ const FEE_PARAMETERS = {
   blobBaseFeeScalar: "1055250",
   fjord: true,
   isthmus: true,
+  jovian: true,
   operatorFeeScalar: "2000",
   operatorFeeConstant: "1000000",
 };
@@ -647,6 +648,10 @@ describe("unsigned Base paper preflight", () => {
     ["operatorFeeConstant above uint64", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: (BigInt(1) << BigInt(64)).toString() } })],
     ["operatorFeeConstant decimal", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: "1.5" } })],
     ["operatorFeeConstant hex", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: "0x1" } })],
+    ["feeParameters jovian missing", executionState({ feeParameters: { ...FEE_PARAMETERS, jovian: undefined } })],
+    ["feeParameters jovian null", executionState({ feeParameters: { ...FEE_PARAMETERS, jovian: null } })],
+    ["feeParameters jovian string", executionState({ feeParameters: { ...FEE_PARAMETERS, jovian: "true" } })],
+    ["feeParameters jovian number", executionState({ feeParameters: { ...FEE_PARAMETERS, jovian: 1 } })],
   ])("fails closed on malformed execution state: %s", async (_label, stateValue) => {
     // Build mocks directly: fixture() defaults would replace an explicit undefined.
     const getQuote = vi.fn(async () => quote());
@@ -654,6 +659,32 @@ describe("unsigned Base paper preflight", () => {
     const getExecutionState = vi.fn(async () => stateValue);
     const error = await rejection(getBasePaperPreflight(500, { getQuote, getWallet, getExecutionState, now: () => NOW }));
     expect(error.code).toBe("PREFLIGHT_INVALID_OBSERVATION");
+  });
+
+  it.each([true, false])("publishes the observed Jovian activation state (%s) without unlocking anything", async (jovian) => {
+    const feeParameters = { ...FEE_PARAMETERS, jovian };
+    const { dependencies } = fixture(quote(), wallet(), () => NOW, executionState({ feeParameters }));
+    const result = await getBasePaperPreflight(500, dependencies);
+
+    expect(result.feeParameters.jovian).toBe(jovian);
+    expect(result.feeParameters).toEqual(feeParameters);
+    // Observing a fork flag proves no cost, so every safety value stays fixed.
+    expect(result).toMatchObject({
+      mode: "paper",
+      executionLocked: true,
+      profitabilityVerified: false,
+      status: "blocked",
+      readiness: "blocked",
+      reserveSufficient: null,
+      walletRpcRequests: 1,
+      executionStateRpcRequests: 1,
+      totalRpcRequests: 2,
+      externalHttpRequests: 5,
+    });
+    expect(result.blockReasons).toEqual(["INSUFFICIENT_NATIVE_BALANCE", "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE"]);
+    expect(result.incompleteChecks).toEqual(COVERED_ALLOWANCE_CHECKS);
+    expect(result.incompleteChecks).toContain("L1_FEE_COVERAGE_UNVERIFIED");
+    expect(result.incompleteChecks).toContain("EXECUTION_VALUATION_UNVERIFIED");
   });
 
   it.each([

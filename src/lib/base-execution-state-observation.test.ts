@@ -67,7 +67,7 @@ function boolResult(value: boolean) {
   return `0x${(value ? "1" : "0").padStart(64, "0")}`;
 }
 
-function replies(results: Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, unknown>> = {}) {
+function replies(results: Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13, unknown>> = {}) {
   const values: Record<number, unknown> = {
     1: "0x2105",
     2: block(),
@@ -81,10 +81,11 @@ function replies(results: Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 
     10: boolResult(true),
     11: uint256(OPERATOR_FEE_SCALAR),
     12: uint256(OPERATOR_FEE_CONSTANT),
+    13: boolResult(true),
     ...results,
   };
   // Out of order on purpose: replies are matched by id.
-  return [4, 2, 9, 12, 3, 10, 5, 7, 11, 1, 6, 8].map((id) => ({ jsonrpc: "2.0", id, result: values[id] }));
+  return [4, 2, 9, 12, 3, 13, 10, 5, 7, 11, 1, 6, 8].map((id) => ({ jsonrpc: "2.0", id, result: values[id] }));
 }
 
 function rpcResponse(body: unknown, status = 200) {
@@ -149,6 +150,7 @@ describe("Base execution state observation", () => {
         blobBaseFeeScalar: BLOB_BASE_FEE_SCALAR,
         fjord: true,
         isthmus: true,
+        jovian: true,
         operatorFeeScalar: OPERATOR_FEE_SCALAR,
         operatorFeeConstant: OPERATOR_FEE_CONSTANT,
       },
@@ -183,8 +185,9 @@ describe("Base execution state observation", () => {
       { jsonrpc: "2.0", id: 10, method: "eth_call", params: [{ to: ORACLE, data: "0xb54501bc" }, "latest"] },
       { jsonrpc: "2.0", id: 11, method: "eth_call", params: [{ to: L1_BLOCK, data: "0x4d5d9a2a" }, "latest"] },
       { jsonrpc: "2.0", id: 12, method: "eth_call", params: [{ to: L1_BLOCK, data: "0x16d3bc7f" }, "latest"] },
+      { jsonrpc: "2.0", id: 13, method: "eth_call", params: [{ to: ORACLE, data: "0x105d0b81" }, "latest"] },
     ]);
-    expect(payload).toHaveLength(12);
+    expect(payload).toHaveLength(13);
     expect(payload[3].params[0].data).toHaveLength(2 + 8 + 64 * 2);
   });
 
@@ -308,6 +311,9 @@ describe("Base execution state observation", () => {
     ["missing isIsthmus reply", replies().filter((reply) => reply.id !== 10)],
     ["duplicate blobBaseFee reply", [...replies(), { jsonrpc: "2.0", id: 6, result: uint256(1) }]],
     ["error isFjord reply", replies().map((reply) => reply.id === 9 ? { jsonrpc: "2.0", id: 9, error: { code: -32000 } } : reply)],
+    ["missing isJovian reply", replies().filter((reply) => reply.id !== 13)],
+    ["duplicate isJovian reply", [...replies(), { jsonrpc: "2.0", id: 13, result: boolResult(false) }]],
+    ["error isJovian reply", replies().map((reply) => reply.id === 13 ? { jsonrpc: "2.0", id: 13, error: { code: 3, message: "execution reverted" } } : reply)],
     ["not a batch", { jsonrpc: "2.0", id: 1, result: "0x2105" }],
     ["invalid JSON", "not json"],
   ])("rejects incomplete or ambiguous RPC responses: %s", async (_label, body) => {
@@ -386,7 +392,9 @@ describe("Base execution state observation", () => {
 
   it("returns fee parameters as exact strings without converting them", async () => {
     const big = ((BigInt(1) << BigInt(60)) + BigInt(1)).toString();
-    const { result } = observe(replies({ 5: uint256(big), 9: boolResult(false), 10: boolResult(false) }));
+    const { result } = observe(replies({
+      5: uint256(big), 9: boolResult(false), 10: boolResult(false), 13: boolResult(false),
+    }));
     const observed = await result;
     expect(observed.feeParameters).toEqual({
       oracleAddress: ORACLE,
@@ -397,6 +405,7 @@ describe("Base execution state observation", () => {
       blobBaseFeeScalar: BLOB_BASE_FEE_SCALAR,
       fjord: false,
       isthmus: false,
+      jovian: false,
       operatorFeeScalar: OPERATOR_FEE_SCALAR,
       operatorFeeConstant: OPERATOR_FEE_CONSTANT,
     });
@@ -424,6 +433,19 @@ describe("Base execution state observation", () => {
     ["isIsthmus 31 bytes", 10, `0x${"0".repeat(62)}`],
     ["isIsthmus number", 10, 1],
     ["isIsthmus null", 10, null],
+    ["isJovian value 2", 13, uint256(2)],
+    // Uppercase hex in an otherwise well-formed 32-byte word: the value is 10, not a bool.
+    ["isJovian uppercase hex word", 13, `0x${"0".repeat(63)}A`],
+    ["isJovian 31 bytes", 13, `0x${"0".repeat(62)}`],
+    ["isJovian 33 bytes", 13, `0x${"0".repeat(66)}`],
+    ["isJovian quantity zero", 13, "0x0"],
+    ["isJovian quantity one", 13, "0x1"],
+    ["isJovian empty data", 13, "0x"],
+    ["isJovian non-hex", 13, `0x${"g".repeat(64)}`],
+    ["isJovian missing 0x", 13, `${"0".repeat(63)}1`],
+    ["isJovian number", 13, 1],
+    ["isJovian null", 13, null],
+    ["isJovian object", 13, {}],
   ])("fails closed on malformed fee parameter data: %s", async (_label, id, value) => {
     const { result } = observe(replies({ [id]: value }));
     expect((await rejection(result)).code).toBe("BASE_RPC_INVALID_RESPONSE");
@@ -465,6 +487,47 @@ describe("Base execution state observation", () => {
     const { fetchImpl, result } = observe(replies({ [id]: value }));
     expect((await rejection(result)).code).toBe("BASE_RPC_INVALID_RESPONSE");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["not active", false],
+    ["active", true],
+  ])("observes the Jovian activation flag when it is %s", async (_label, jovian) => {
+    const { fetchImpl, result } = observe(replies({ 13: boolResult(jovian) }));
+    const observed = await result;
+
+    expect(observed.feeParameters.jovian).toBe(jovian);
+    expect(typeof observed.feeParameters.jovian).toBe("boolean");
+    // The other fork flags and operator fee inputs keep their observed values.
+    expect(observed.feeParameters).toMatchObject({
+      fjord: true,
+      isthmus: true,
+      operatorFeeScalar: OPERATOR_FEE_SCALAR,
+      operatorFeeConstant: OPERATOR_FEE_CONSTANT,
+    });
+    expect(observed).toMatchObject({
+      mode: "paper",
+      executionLocked: true,
+      status: "observed",
+      readiness: "blocked",
+      rpcRequests: 1,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the GasPriceOracle for isJovian exactly once in the same single batch", async () => {
+    const { fetchImpl, result } = observe(replies());
+    await result;
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)) as Array<{
+      method?: string;
+      params?: [{ to?: string; data?: string }, string];
+    }>;
+    const jovianCalls = payload.filter((call) =>
+      call.method === "eth_call" && call.params?.[0].to === ORACLE && call.params?.[0].data === "0x105d0b81");
+    expect(jovianCalls).toHaveLength(1);
+    expect(payload).toHaveLength(13);
   });
 
   it.each([0, -1, 1.5, Number.NaN])("fails closed on invalid nowMs %s without RPC work", async (nowMs) => {

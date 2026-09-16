@@ -168,6 +168,7 @@ const feeParametersSchema = z.object({
   blobBaseFeeScalar: unitsSchema,
   fjord: z.boolean(),
   isthmus: z.boolean(),
+  jovian: z.boolean(),
   // Isthmus operator fee inputs from the L1Block predeploy, bounded by their ABI widths.
   operatorFeeScalar: boundedUnitsSchema(MAX_UINT32),
   operatorFeeConstant: boundedUnitsSchema(MAX_UINT64),

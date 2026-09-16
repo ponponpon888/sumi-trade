@@ -7,6 +7,8 @@ const BASE_USDC_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const ALLOWANCE_SELECTOR = "0xdd62ed3e"; // allowance(address,address)
 const GAS_PRICE_ORACLE_ADDRESS = "0x420000000000000000000000000000000000000f";
 // Selectors confirmed against the 4byte directory and a live read of Base mainnet (oracle version 1.6.0).
+// isJovian() is not listed in the 4byte directory, so its selector was derived from keccak256("isJovian()")
+// and cross-checked against the official GasPriceOracle ABI snapshot and a live read of Base mainnet.
 const ORACLE_SELECTORS = {
   l1BaseFee: "0x519b4bd3",
   blobBaseFee: "0xf8206140",
@@ -14,6 +16,7 @@ const ORACLE_SELECTORS = {
   blobBaseFeeScalar: "0x68d5dca6",
   isFjord: "0x960e3a23",
   isIsthmus: "0xb54501bc",
+  isJovian: "0x105d0b81",
 } as const;
 const L1_BLOCK_ADDRESS = "0x4200000000000000000000000000000000000015";
 // Selectors confirmed against the L1Block ABI snapshot (operatorFeeScalar -> uint32,
@@ -209,6 +212,7 @@ export async function getBaseExecutionStateObservation(
     oracleCall(10, ORACLE_SELECTORS.isIsthmus),
     l1BlockCall(11, L1_BLOCK_SELECTORS.operatorFeeScalar),
     l1BlockCall(12, L1_BLOCK_SELECTORS.operatorFeeConstant),
+    oracleCall(13, ORACLE_SELECTORS.isJovian),
   ];
 
   // One batch POST. No retry, polling, cache or persistence.
@@ -259,11 +263,12 @@ export async function getBaseExecutionStateObservation(
   const isthmus = boolReturnData(requiredResult(replies, 10));
   const operatorFeeScalar = uint32ReturnData(requiredResult(replies, 11));
   const operatorFeeConstant = uint64ReturnData(requiredResult(replies, 12));
+  const jovian = boolReturnData(requiredResult(replies, 13));
   if (
     blockNumber === null || blockTimestamp === null || l2BaseFeePerGas === null ||
     code === null || allowance === null ||
     l1BaseFee === null || blobBaseFee === null || baseFeeScalar === null || blobBaseFeeScalar === null ||
-    fjord === null || isthmus === null ||
+    fjord === null || isthmus === null || jovian === null ||
     operatorFeeScalar === null || operatorFeeConstant === null
   ) {
     throw new BaseExecutionStateObservationError("BASE_RPC_INVALID_RESPONSE");
@@ -310,9 +315,11 @@ export async function getBaseExecutionStateObservation(
       blobBaseFeeScalar: blobBaseFeeScalar.toString(),
       fjord,
       isthmus,
-      // Isthmus operator fee inputs, read from the L1Block predeploy:
-      // operatorFee = gas * operatorFeeScalar / 1e6 + operatorFeeConstant.
-      // The gas amount is unknown here, so no operator fee is computed.
+      jovian,
+      // Operator fee inputs, read from the L1Block predeploy. The formula depends on the active fork:
+      //   Isthmus (pre-Jovian): operatorFee = gas * operatorFeeScalar / 1e6 + operatorFeeConstant
+      //   Jovian and after:     operatorFee = gas * operatorFeeScalar * 100 + operatorFeeConstant
+      // The gas amount is unknown here, so no operator fee is computed under either formula.
       operatorFeeScalar: operatorFeeScalar.toString(),
       operatorFeeConstant: operatorFeeConstant.toString(),
     },

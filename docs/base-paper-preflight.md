@@ -45,21 +45,26 @@ SELL legのUSDC allowanceを署名なしで観測する。既存のダッシュ�
   読取専用のallowance照会だけに使う。
 - `feeParameters`は実行状態と同じバッチで読んだ観測値。`GasPriceOracle`
   （`0x420000000000000000000000000000000000000f`）の`l1BaseFee`、`blobBaseFee`、
-  `baseFeeScalar`、`blobBaseFeeScalar`、`isFjord`、`isIsthmus`と、最新ブロックの
+  `baseFeeScalar`、`blobBaseFeeScalar`、`isFjord`、`isIsthmus`、`isJovian`と、最新ブロックの
   `baseFeePerGas`。数値は文字列のまま返し、numberへ変換しない。calldataがないため
   L1費用のカバーは計算できず、`L1_FEE_COVERAGE_UNVERIFIED`は解消しない。
 - `operatorFeeScalar`と`operatorFeeConstant`は`L1Block` predeploy
   （`0x4200000000000000000000000000000000000015`）から同じバッチで観測する。
   ABI幅に合わせて`operatorFeeScalar`はuint32以下、`operatorFeeConstant`はuint64以下だけを
   受理し、BigIntで検証して10進文字列で返す。
-- **Isthmus-eraの式**は
-  `gas × operatorFeeScalar ÷ 1,000,000 + operatorFeeConstant`。
-  ただし**現在の実装はこの2値を観測するだけで、operator fee金額は計算しない**。
-  実際のUserOperationのgas量が不明なため。
-- 現在は`isFjord`と`isIsthmus`を観測しているが、**Jovianの有効状態は観測していない**。
+- forkの有効状態は`fjord`、`isthmus`、`jovian`の3つをbooleanで観測する。
+  公開フィールド名は既存の`fjord`・`isthmus`に合わせ、`jovian`とする（`isJovian`ではない）。
+  `isJovian()`のselector `0x105d0b81`は4byteディレクトリに登録がないため、
+  keccak256から導出し、公式GasPriceOracleのABIとBase mainnetの実読み取りで照合した。
+  eth_callの戻り値は32バイト固定長のABI wordで、値が0か1の場合だけ受理する。
+- **operator feeの式は有効なforkによって異なる**。
+  - Isthmus（Jovian前）: `gas × operatorFeeScalar ÷ 1,000,000 + operatorFeeConstant`
+  - **Jovian以降**: `gas × operatorFeeScalar × 100 + operatorFeeConstant`
+- ただし**現在の実装はfork状態とパラメータを観測するだけで、operator fee金額は計算しない**。
+  実際のUserOperationのgas量が不明なため、どちらの式も適用しない。
 - 将来operator fee金額を計算する場合は、その時点でBase上で有効なforkと公式仕様を確認し、
   適用する式を選び直す必要がある。上記の式を無条件に使わない。
-- この2値の観測は費用の証明ではない。観測値が存在しても
+- fork状態とこれらの値の観測は費用の証明ではない。観測値が存在しても
   `EXECUTION_VALUATION_UNVERIFIED`は解消しない。`totalCostYen`と`reserveSufficient`も
   nullのまま。
 - 未デプロイやallowance不足は報告するだけで、デプロイ、approve、permit、署名、送信で修復しない。
@@ -121,5 +126,8 @@ SELL legのUSDC allowanceを署名なしで観測する。既存のダッシュ�
 - 署名、CDP APIキー、Wallet Secret、approve、permit、Permit2、Smart Accountのデプロイ、
   calldata/build API、sendTransaction、sendUserOperation、eth_sendRawTransaction、
   資金移動、自動スワップは実装しない。
+- KyberSwapの`POST /route/build`は実装しない。calldataの生成・長さ計測・ハッシュ化・保存・
+  返却も行わない。`getL1Fee`と`getL1FeeUpperBound`の呼び出しもこの段階では実装しない。
+  行うのはfork状態とfeeパラメータの観測だけで、L1費用もoperator fee金額も計算しない。
 - 見積の`providerEstimate`はpreflightに含めない。推定値は`/api/paper/base-quote`で確認する。
 - 新しい環境変数はない。`BASE_RPC_URL`と`BASE_WALLET_ADDRESS`は既存のウォレット観測の設定を使う。
