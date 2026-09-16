@@ -19,6 +19,11 @@ const L1_BASE_FEE = "43830987";
 const BLOB_BASE_FEE = "2497031";
 const BASE_FEE_SCALAR = "2269";
 const BLOB_BASE_FEE_SCALAR = "1055250";
+const L1_BLOCK = "0x4200000000000000000000000000000000000015";
+const OPERATOR_FEE_SCALAR = "2000";
+const OPERATOR_FEE_CONSTANT = "1000000";
+const MAX_UINT32_TEXT = ((BigInt(1) << BigInt(32)) - BigInt(1)).toString();
+const MAX_UINT64_TEXT = ((BigInt(1) << BigInt(64)) - BigInt(1)).toString();
 const SECRET_RPC_URL = "https://base.example/rpc/secret-key-123";
 const MISSING = Symbol("missing");
 
@@ -62,7 +67,7 @@ function boolResult(value: boolean) {
   return `0x${(value ? "1" : "0").padStart(64, "0")}`;
 }
 
-function replies(results: Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10, unknown>> = {}) {
+function replies(results: Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12, unknown>> = {}) {
   const values: Record<number, unknown> = {
     1: "0x2105",
     2: block(),
@@ -74,10 +79,12 @@ function replies(results: Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
     8: uint256(BLOB_BASE_FEE_SCALAR),
     9: boolResult(true),
     10: boolResult(true),
+    11: uint256(OPERATOR_FEE_SCALAR),
+    12: uint256(OPERATOR_FEE_CONSTANT),
     ...results,
   };
   // Out of order on purpose: replies are matched by id.
-  return [4, 2, 9, 3, 10, 5, 7, 1, 6, 8].map((id) => ({ jsonrpc: "2.0", id, result: values[id] }));
+  return [4, 2, 9, 12, 3, 10, 5, 7, 11, 1, 6, 8].map((id) => ({ jsonrpc: "2.0", id, result: values[id] }));
 }
 
 function rpcResponse(body: unknown, status = 200) {
@@ -142,6 +149,8 @@ describe("Base execution state observation", () => {
         blobBaseFeeScalar: BLOB_BASE_FEE_SCALAR,
         fjord: true,
         isthmus: true,
+        operatorFeeScalar: OPERATOR_FEE_SCALAR,
+        operatorFeeConstant: OPERATOR_FEE_CONSTANT,
       },
       blockNumber: "123456",
       blockTimestampMs: NOW_SECONDS * 1_000,
@@ -172,7 +181,10 @@ describe("Base execution state observation", () => {
       { jsonrpc: "2.0", id: 8, method: "eth_call", params: [{ to: ORACLE, data: "0x68d5dca6" }, "latest"] },
       { jsonrpc: "2.0", id: 9, method: "eth_call", params: [{ to: ORACLE, data: "0x960e3a23" }, "latest"] },
       { jsonrpc: "2.0", id: 10, method: "eth_call", params: [{ to: ORACLE, data: "0xb54501bc" }, "latest"] },
+      { jsonrpc: "2.0", id: 11, method: "eth_call", params: [{ to: L1_BLOCK, data: "0x4d5d9a2a" }, "latest"] },
+      { jsonrpc: "2.0", id: 12, method: "eth_call", params: [{ to: L1_BLOCK, data: "0x16d3bc7f" }, "latest"] },
     ]);
+    expect(payload).toHaveLength(12);
     expect(payload[3].params[0].data).toHaveLength(2 + 8 + 64 * 2);
   });
 
@@ -288,6 +300,10 @@ describe("Base execution state observation", () => {
     ["missing baseFeePerGas", replies({ 2: { number: "0x1e240", timestamp: `0x${NOW_SECONDS.toString(16)}` } })],
     ["baseFeePerGas with leading zero", replies({ 2: block({ baseFeePerGas: "0x04c4b40" }) })],
     ["baseFeePerGas not hex", replies({ 2: block({ baseFeePerGas: "5000000" }) })],
+    ["missing operatorFeeScalar reply", replies().filter((reply) => reply.id !== 11)],
+    ["missing operatorFeeConstant reply", replies().filter((reply) => reply.id !== 12)],
+    ["duplicate operatorFeeScalar reply", [...replies(), { jsonrpc: "2.0", id: 11, result: uint256(1) }]],
+    ["error operatorFeeConstant reply", replies().map((reply) => reply.id === 12 ? { jsonrpc: "2.0", id: 12, error: { code: -32000 } } : reply)],
     ["missing l1BaseFee reply", replies().filter((reply) => reply.id !== 5)],
     ["missing isIsthmus reply", replies().filter((reply) => reply.id !== 10)],
     ["duplicate blobBaseFee reply", [...replies(), { jsonrpc: "2.0", id: 6, result: uint256(1) }]],
@@ -381,6 +397,8 @@ describe("Base execution state observation", () => {
       blobBaseFeeScalar: BLOB_BASE_FEE_SCALAR,
       fjord: false,
       isthmus: false,
+      operatorFeeScalar: OPERATOR_FEE_SCALAR,
+      operatorFeeConstant: OPERATOR_FEE_CONSTANT,
     });
     for (const key of ["l2BaseFeePerGasWei", "l1BaseFeeWei", "blobBaseFeeWei", "baseFeeScalar", "blobBaseFeeScalar"] as const) {
       expect(typeof observed.feeParameters[key]).toBe("string");
@@ -409,6 +427,44 @@ describe("Base execution state observation", () => {
   ])("fails closed on malformed fee parameter data: %s", async (_label, id, value) => {
     const { result } = observe(replies({ [id]: value }));
     expect((await rejection(result)).code).toBe("BASE_RPC_INVALID_RESPONSE");
+  });
+
+  it.each([
+    ["zero", "0", "0"],
+    ["uint32 and uint64 maximums", MAX_UINT32_TEXT, MAX_UINT64_TEXT],
+    ["beyond 2^53", "4000", "9007199254740993"],
+  ])("accepts operator fee parameters at %s and keeps them as strings", async (_label, scalar, constant) => {
+    const { fetchImpl, result } = observe(replies({ 11: uint256(scalar), 12: uint256(constant) }));
+    const observed = await result;
+    expect(observed.feeParameters.operatorFeeScalar).toBe(scalar);
+    expect(observed.feeParameters.operatorFeeConstant).toBe(constant);
+    expect(typeof observed.feeParameters.operatorFeeScalar).toBe("string");
+    expect(typeof observed.feeParameters.operatorFeeConstant).toBe("string");
+    expect(observed).toMatchObject({
+      mode: "paper",
+      executionLocked: true,
+      status: "observed",
+      readiness: "blocked",
+      rpcRequests: 1,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["operatorFeeScalar above uint32", 11, uint256((BigInt(1) << BigInt(32)).toString())],
+    ["operatorFeeConstant above uint64", 12, uint256((BigInt(1) << BigInt(64)).toString())],
+    ["operatorFeeScalar 31 bytes", 11, `0x${"0".repeat(62)}`],
+    ["operatorFeeScalar 33 bytes", 11, `0x${"0".repeat(66)}`],
+    ["operatorFeeConstant 31 bytes", 12, `0x${"0".repeat(62)}`],
+    ["operatorFeeScalar quantity form", 11, "0x1"],
+    ["operatorFeeConstant quantity form", 12, "0x0"],
+    ["operatorFeeScalar non-hex", 11, `0x${"g".repeat(64)}`],
+    ["operatorFeeConstant null", 12, null],
+    ["operatorFeeScalar number", 11, 2000],
+  ])("fails closed on malformed operator fee data: %s", async (_label, id, value) => {
+    const { fetchImpl, result } = observe(replies({ [id]: value }));
+    expect((await rejection(result)).code).toBe("BASE_RPC_INVALID_RESPONSE");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it.each([0, -1, 1.5, Number.NaN])("fails closed on invalid nowMs %s without RPC work", async (nowMs) => {

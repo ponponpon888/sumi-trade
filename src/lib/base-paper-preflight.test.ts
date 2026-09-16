@@ -30,7 +30,11 @@ const FEE_PARAMETERS = {
   blobBaseFeeScalar: "1055250",
   fjord: true,
   isthmus: true,
+  operatorFeeScalar: "2000",
+  operatorFeeConstant: "1000000",
 };
+const MAX_UINT32_TEXT = ((BigInt(1) << BigInt(32)) - BigInt(1)).toString();
+const MAX_UINT64_TEXT = ((BigInt(1) << BigInt(64)) - BigInt(1)).toString();
 const DEPLOYMENT_CHECK = "SMART_ACCOUNT_DEPLOYMENT_COST_UNVERIFIED";
 const REMAINING_CHECKS = [
   "L1_FEE_COVERAGE_UNVERIFIED",
@@ -633,6 +637,16 @@ describe("unsigned Base paper preflight", () => {
     ["feeParameters l2BaseFeePerGasWei decimal", executionState({ feeParameters: { ...FEE_PARAMETERS, l2BaseFeePerGasWei: "1.5" } })],
     ["feeParameters fjord string", executionState({ feeParameters: { ...FEE_PARAMETERS, fjord: "true" } })],
     ["feeParameters isthmus missing", executionState({ feeParameters: { ...FEE_PARAMETERS, isthmus: undefined } })],
+    ["operatorFeeScalar missing", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeScalar: undefined } })],
+    ["operatorFeeConstant missing", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: undefined } })],
+    ["operatorFeeScalar number", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeScalar: 2000 } })],
+    ["operatorFeeScalar negative", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeScalar: "-1" } })],
+    ["operatorFeeScalar exponent", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeScalar: "2e3" } })],
+    ["operatorFeeScalar leading zero", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeScalar: "02000" } })],
+    ["operatorFeeScalar above uint32", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeScalar: (BigInt(1) << BigInt(32)).toString() } })],
+    ["operatorFeeConstant above uint64", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: (BigInt(1) << BigInt(64)).toString() } })],
+    ["operatorFeeConstant decimal", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: "1.5" } })],
+    ["operatorFeeConstant hex", executionState({ feeParameters: { ...FEE_PARAMETERS, operatorFeeConstant: "0x1" } })],
   ])("fails closed on malformed execution state: %s", async (_label, stateValue) => {
     // Build mocks directly: fixture() defaults would replace an explicit undefined.
     const getQuote = vi.fn(async () => quote());
@@ -640,6 +654,31 @@ describe("unsigned Base paper preflight", () => {
     const getExecutionState = vi.fn(async () => stateValue);
     const error = await rejection(getBasePaperPreflight(500, { getQuote, getWallet, getExecutionState, now: () => NOW }));
     expect(error.code).toBe("PREFLIGHT_INVALID_OBSERVATION");
+  });
+
+  it.each([
+    ["zero", "0", "0"],
+    ["uint32 and uint64 maximums", MAX_UINT32_TEXT, MAX_UINT64_TEXT],
+    ["beyond 2^53", "4000", "9007199254740993"],
+  ])("passes operator fee parameters through unchanged at %s", async (_label, scalar, constant) => {
+    const feeParameters = { ...FEE_PARAMETERS, operatorFeeScalar: scalar, operatorFeeConstant: constant };
+    const { dependencies } = fixture(quote(), wallet(), () => NOW, executionState({ feeParameters }));
+    const result = await getBasePaperPreflight(500, dependencies);
+
+    expect(result.feeParameters).toEqual(feeParameters);
+    expect(result.blockReasons).toEqual(["INSUFFICIENT_NATIVE_BALANCE", "EXECUTION_LOCKED", "PREFLIGHT_CHECKS_INCOMPLETE"]);
+    expect(result.incompleteChecks).toEqual(COVERED_ALLOWANCE_CHECKS);
+    expect(result.incompleteChecks).toContain("L1_FEE_COVERAGE_UNVERIFIED");
+    expect(result.incompleteChecks).toContain("EXECUTION_VALUATION_UNVERIFIED");
+    expect(result).toMatchObject({
+      executionLocked: true,
+      profitabilityVerified: false,
+      readiness: "blocked",
+      status: "blocked",
+      reserveSufficient: null,
+    });
+    // Preflight never reports a total cost; that field belongs to the quote response.
+    expect(result).not.toHaveProperty("totalCostYen");
   });
 
   it("fails closed on execution state chainId mismatch", async () => {

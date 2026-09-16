@@ -48,6 +48,20 @@ SELL legのUSDC allowanceを署名なしで観測する。既存のダッシュ�
   `baseFeeScalar`、`blobBaseFeeScalar`、`isFjord`、`isIsthmus`と、最新ブロックの
   `baseFeePerGas`。数値は文字列のまま返し、numberへ変換しない。calldataがないため
   L1費用のカバーは計算できず、`L1_FEE_COVERAGE_UNVERIFIED`は解消しない。
+- `operatorFeeScalar`と`operatorFeeConstant`は`L1Block` predeploy
+  （`0x4200000000000000000000000000000000000015`）から同じバッチで観測する。
+  ABI幅に合わせて`operatorFeeScalar`はuint32以下、`operatorFeeConstant`はuint64以下だけを
+  受理し、BigIntで検証して10進文字列で返す。
+- **Isthmus-eraの式**は
+  `gas × operatorFeeScalar ÷ 1,000,000 + operatorFeeConstant`。
+  ただし**現在の実装はこの2値を観測するだけで、operator fee金額は計算しない**。
+  実際のUserOperationのgas量が不明なため。
+- 現在は`isFjord`と`isIsthmus`を観測しているが、**Jovianの有効状態は観測していない**。
+- 将来operator fee金額を計算する場合は、その時点でBase上で有効なforkと公式仕様を確認し、
+  適用する式を選び直す必要がある。上記の式を無条件に使わない。
+- この2値の観測は費用の証明ではない。観測値が存在しても
+  `EXECUTION_VALUATION_UNVERIFIED`は解消しない。`totalCostYen`と`reserveSufficient`も
+  nullのまま。
 - 未デプロイやallowance不足は報告するだけで、デプロイ、approve、permit、署名、送信で修復しない。
 - 残高やallowanceが足りても未確認項目が残るため、`status`と`readiness`は常に`blocked`、
   `executionLocked: true`、`profitabilityVerified: false`、`reserveSufficient: null`。

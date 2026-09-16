@@ -15,11 +15,19 @@ const ORACLE_SELECTORS = {
   isFjord: "0x960e3a23",
   isIsthmus: "0xb54501bc",
 } as const;
+const L1_BLOCK_ADDRESS = "0x4200000000000000000000000000000000000015";
+// Selectors confirmed against the L1Block ABI snapshot (operatorFeeScalar -> uint32,
+// operatorFeeConstant -> uint64) and a live read of Base mainnet (L1Block version 1.7.0).
+const L1_BLOCK_SELECTORS = {
+  operatorFeeScalar: "0x4d5d9a2a",
+  operatorFeeConstant: "0x16d3bc7f",
+} as const;
 const MAX_BLOCK_AGE_SECONDS = 60;
 const MAX_FUTURE_BLOCK_SECONDS = 5;
 const MAX_CODE_BYTES = 24_576; // EIP-170 contract code size limit.
 const MAX_UINT = (BigInt(1) << BigInt(256)) - BigInt(1);
 const MAX_UINT32 = (BigInt(1) << BigInt(32)) - BigInt(1);
+const MAX_UINT64 = (BigInt(1) << BigInt(64)) - BigInt(1);
 const POSITIVE_UNITS_PATTERN = /^[1-9][0-9]{0,77}$/;
 const EIP7702_DELEGATION_PATTERN = /^0xef0100[0-9a-f]{40}$/i;
 
@@ -109,6 +117,12 @@ function uint32ReturnData(value: unknown): bigint | null {
   return parsed !== null && parsed <= MAX_UINT32 ? parsed : null;
 }
 
+// eth_call ABI uint64 return data: 32 bytes that fit in uint64.
+function uint64ReturnData(value: unknown): bigint | null {
+  const parsed = uint256ReturnData(value);
+  return parsed !== null && parsed <= MAX_UINT64 ? parsed : null;
+}
+
 // eth_call ABI bool return data: 32 bytes that are exactly 0 or 1.
 function boolReturnData(value: unknown): boolean | null {
   if (typeof value !== "string") return null;
@@ -141,6 +155,15 @@ function oracleCall(id: number, data: string) {
     id,
     method: "eth_call",
     params: [{ to: GAS_PRICE_ORACLE_ADDRESS, data }, "latest"],
+  };
+}
+
+function l1BlockCall(id: number, data: string) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "eth_call",
+    params: [{ to: L1_BLOCK_ADDRESS, data }, "latest"],
   };
 }
 
@@ -184,6 +207,8 @@ export async function getBaseExecutionStateObservation(
     oracleCall(8, ORACLE_SELECTORS.blobBaseFeeScalar),
     oracleCall(9, ORACLE_SELECTORS.isFjord),
     oracleCall(10, ORACLE_SELECTORS.isIsthmus),
+    l1BlockCall(11, L1_BLOCK_SELECTORS.operatorFeeScalar),
+    l1BlockCall(12, L1_BLOCK_SELECTORS.operatorFeeConstant),
   ];
 
   // One batch POST. No retry, polling, cache or persistence.
@@ -232,11 +257,14 @@ export async function getBaseExecutionStateObservation(
   const blobBaseFeeScalar = uint32ReturnData(requiredResult(replies, 8));
   const fjord = boolReturnData(requiredResult(replies, 9));
   const isthmus = boolReturnData(requiredResult(replies, 10));
+  const operatorFeeScalar = uint32ReturnData(requiredResult(replies, 11));
+  const operatorFeeConstant = uint64ReturnData(requiredResult(replies, 12));
   if (
     blockNumber === null || blockTimestamp === null || l2BaseFeePerGas === null ||
     code === null || allowance === null ||
     l1BaseFee === null || blobBaseFee === null || baseFeeScalar === null || blobBaseFeeScalar === null ||
-    fjord === null || isthmus === null
+    fjord === null || isthmus === null ||
+    operatorFeeScalar === null || operatorFeeConstant === null
   ) {
     throw new BaseExecutionStateObservationError("BASE_RPC_INVALID_RESPONSE");
   }
@@ -282,6 +310,11 @@ export async function getBaseExecutionStateObservation(
       blobBaseFeeScalar: blobBaseFeeScalar.toString(),
       fjord,
       isthmus,
+      // Isthmus operator fee inputs, read from the L1Block predeploy:
+      // operatorFee = gas * operatorFeeScalar / 1e6 + operatorFeeConstant.
+      // The gas amount is unknown here, so no operator fee is computed.
+      operatorFeeScalar: operatorFeeScalar.toString(),
+      operatorFeeConstant: operatorFeeConstant.toString(),
     },
     blockNumber: blockNumber.toString(),
     blockTimestampMs: Number(blockTimestamp) * 1_000,

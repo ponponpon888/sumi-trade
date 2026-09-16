@@ -18,6 +18,8 @@ const BASE_CHAIN_ID = 8453;
 const BASE_USDC_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const BASE_GAS_PRICE_ORACLE_ADDRESS = "0x420000000000000000000000000000000000000f";
 const MAX_UINT = (BigInt(1) << BigInt(256)) - BigInt(1);
+const MAX_UINT32 = (BigInt(1) << BigInt(32)) - BigInt(1);
+const MAX_UINT64 = (BigInt(1) << BigInt(64)) - BigInt(1);
 const UNITS_PATTERN = /^(0|[1-9][0-9]{0,77})$/;
 
 const KNOWN_INCOMPLETE_CHECKS = [
@@ -123,6 +125,10 @@ export class BasePaperPreflightError extends Error {
 }
 
 const unitsSchema = z.string().refine((value) => UNITS_PATTERN.test(value) && BigInt(value) <= MAX_UINT);
+// Decimal integer strings bounded by an ABI width. Checked with BigInt; never converted to number.
+function boundedUnitsSchema(maximum: bigint) {
+  return z.string().refine((value) => UNITS_PATTERN.test(value) && BigInt(value) <= maximum);
+}
 const positiveUnitsSchema = unitsSchema.refine((value) => value !== "0");
 const lowercaseAddressSchema = z.string().regex(/^0x[0-9a-f]{40}$/).refine((value) => !/^0x0{40}$/.test(value));
 const incompleteChecksSchema = z.array(z.enum(KNOWN_INCOMPLETE_CHECKS));
@@ -162,6 +168,9 @@ const feeParametersSchema = z.object({
   blobBaseFeeScalar: unitsSchema,
   fjord: z.boolean(),
   isthmus: z.boolean(),
+  // Isthmus operator fee inputs from the L1Block predeploy, bounded by their ABI widths.
+  operatorFeeScalar: boundedUnitsSchema(MAX_UINT32),
+  operatorFeeConstant: boundedUnitsSchema(MAX_UINT64),
 });
 const executionStateSchema = z.object({
   mode: z.literal("paper"),
