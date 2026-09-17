@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 
 import { PaperControls } from "@/app/_components/paper-controls";
+import { SafetyDecisionSummaryBoard } from "@/app/_components/safety-decision-summary-board";
 import { formatAmount, formatUsd } from "@/lib/number";
+import { createSafetyDecisionSummaryView } from "@/lib/safety-decision-summary-view";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
@@ -1487,6 +1489,7 @@ export function Dashboard({
   const actionableSignals = plan.signals.filter((signal) =>
     ["BUY", "SELL"].includes(signal.action),
   );
+  const safetyDecisionSummary = createSafetyDecisionSummaryView({ plan, safetyControl });
 
   return (
     <main>
@@ -1563,6 +1566,8 @@ export function Dashboard({
       ) : null}
 
       <OperationalSafetyStrip safety={safetyControl} />
+
+      <SafetyDecisionSummaryBoard view={safetyDecisionSummary} />
 
       <DataSourceQualityBoard
         quality={dataSourceQuality}
