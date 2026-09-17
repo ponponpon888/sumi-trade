@@ -1,8 +1,17 @@
 import { z } from "zod";
 
 import { DEXSCREENER_ORIGIN } from "@/lib/config";
+import {
+  classifyDataSourceFailure,
+  DataSourceHttpError,
+} from "@/lib/data-source-failure";
 import { asFiniteNumber } from "@/lib/number";
-import type { MarketData } from "@/lib/types";
+import type { DataSourceFailureKind, MarketData } from "@/lib/types";
+
+export type MarketLookup =
+  | { status: "found"; market: MarketData }
+  | { status: "no-pair" }
+  | { status: "failed"; failureKind: DataSourceFailureKind };
 
 const tokenSchema = z.object({
   address: z.string(),
@@ -53,7 +62,10 @@ export async function getTokenMarket(
   );
 
   if (!response.ok) {
-    throw new Error(`Market data request failed (${response.status}).`);
+    throw new DataSourceHttpError(
+      response.status,
+      `Market data request failed (${response.status}).`,
+    );
   }
 
   const parsed = responseSchema.parse(await response.json());
@@ -86,22 +98,39 @@ export async function getTokenMarket(
   };
 }
 
-export async function getTokenMarkets(
+/** Distinguishes a failed request from a successful response without a trusted pair. */
+export async function getTokenMarketLookups(
   contractAddresses: string[],
-): Promise<Map<string, MarketData | null>> {
+): Promise<Map<string, MarketLookup>> {
   const settled = await Promise.allSettled(
-    contractAddresses.map(async (address) => ({
-      address: address.toLowerCase(),
-      market: await getTokenMarket(address),
-    })),
+    contractAddresses.map((address) => getTokenMarket(address)),
   );
 
-  const markets = new Map<string, MarketData | null>();
+  const lookups = new Map<string, MarketLookup>();
   for (let index = 0; index < settled.length; index += 1) {
     const result = settled[index];
     const address = contractAddresses[index].toLowerCase();
-    markets.set(address, result.status === "fulfilled" ? result.value.market : null);
+    lookups.set(
+      address,
+      result.status === "rejected"
+        ? { status: "failed", failureKind: classifyDataSourceFailure(result.reason) }
+        : result.value
+          ? { status: "found", market: result.value }
+          : { status: "no-pair" },
+    );
   }
 
-  return markets;
+  return lookups;
+}
+
+export async function getTokenMarkets(
+  contractAddresses: string[],
+): Promise<Map<string, MarketData | null>> {
+  const lookups = await getTokenMarketLookups(contractAddresses);
+  return new Map(
+    [...lookups].map(([address, lookup]) => [
+      address,
+      lookup.status === "found" ? lookup.market : null,
+    ]),
+  );
 }

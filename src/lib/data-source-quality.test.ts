@@ -4,13 +4,44 @@ import {
   assessDataSourceQuality,
   calculateDataSourceIncidents,
   calculateDataSourceQualityHistory,
+  fetchedChartSourceCheck,
+  onchainSourceCheck,
+  quoteSourceCheck,
 } from "@/lib/data-source-quality";
 import type {
   ChartModelSnapshot,
+  DataSourceCheckResult,
   DataSourceQualityItem,
+  OnchainPreflightAssessment,
+  PaperDataSourceObservation,
   PaperScanRecord,
+  PortfolioAsset,
   PortfolioSnapshot,
+  PreflightAssessment,
 } from "@/lib/types";
+
+function asset(overrides: Partial<PortfolioAsset> = {}): PortfolioAsset {
+  return {
+    symbol: "TEST",
+    name: "Test",
+    contractAddress: "0x0000000000000000000000000000000000000002",
+    amount: 1,
+    priceUsd: 1,
+    valueUsd: 1,
+    liquidityUsd: null,
+    volume24hUsd: null,
+    priceChange24h: null,
+    tradability: "eligible",
+    reason: "test",
+    pairUrl: null,
+    pairAddress: "0x0000000000000000000000000000000000000003",
+    dexId: null,
+    contractSafety: null,
+    quotePreflight: null,
+    onchainPreflight: null,
+    ...overrides,
+  };
+}
 
 function fixtures(): {
   snapshot: PortfolioSnapshot;
@@ -70,35 +101,33 @@ describe("data source quality", () => {
     });
   });
 
-  it("reports partial market coverage without changing trade decisions", () => {
+  it("treats a market without a trusted pair as policy-blocked, not a source failure", () => {
     const { snapshot, chartModel } = fixtures();
-    snapshot.assets = [
-      {
-        symbol: "TEST",
-        name: "Test",
-        contractAddress: "0x0000000000000000000000000000000000000002",
-        amount: 1,
-        priceUsd: null,
-        valueUsd: 0,
-        liquidityUsd: null,
-        volume24hUsd: null,
-        priceChange24h: null,
-        tradability: "blocked",
-        reason: "市場データなし",
-        pairUrl: null,
-        pairAddress: null,
-        dexId: null,
-        contractSafety: null,
-        quotePreflight: null,
-        onchainPreflight: null,
-      },
-    ];
+    snapshot.assets = [asset({ tradability: "blocked", priceUsd: null, pairAddress: null })];
+    snapshot.sourceChecks = { dexscreener: [{ outcome: "policy-blocked" }] };
 
     const quality = assessDataSourceQuality(snapshot, chartModel);
     expect(quality.sources.find((item) => item.source === "dexscreener")).toMatchObject({
-      status: "degraded",
+      status: "healthy",
       observedCount: 1,
+      requestedCount: 1,
       successfulCount: 0,
+      policyBlockedCount: 1,
+      sourceUnavailableCount: 0,
+      coveragePercent: 100,
+      qualityDefinition: 2,
+    });
+  });
+
+  it("conservatively counts an unattributed missing market as a source failure", () => {
+    const { snapshot, chartModel } = fixtures();
+    snapshot.assets = [asset({ tradability: "blocked", priceUsd: null, pairAddress: null })];
+
+    const quality = assessDataSourceQuality(snapshot, chartModel);
+    expect(quality.sources.find((item) => item.source === "dexscreener")).toMatchObject({
+      status: "unavailable",
+      sourceUnavailableCount: 1,
+      failureBreakdown: { rateLimited: 0, timeout: 0, httpError: 0, parseError: 0, other: 1 },
     });
   });
 
@@ -122,6 +151,18 @@ describe("data source quality", () => {
           status: ethereumStatus,
           coveragePercent: ethereumStatus === "unavailable" ? 0 : 100,
           dataAgeSeconds: ethereumStatus === "unavailable" ? null : 12,
+          qualityDefinition: 2,
+          requestedCount: 1,
+          sourceUnavailableCount: ethereumStatus === "unavailable" ? 1 : 0,
+          sourceStaleCount: 0,
+          policyBlockedCount: 0,
+          failureBreakdown: {
+            rateLimited: 0,
+            timeout: ethereumStatus === "unavailable" ? 1 : 0,
+            httpError: 0,
+            parseError: 0,
+            other: 0,
+          },
         },
       ],
     };
@@ -345,4 +386,283 @@ describe("data source quality", () => {
       .toMatchObject({ status: "collecting", lastObservedAt: null });
   });
 
+});
+
+function quote(
+  status: PreflightAssessment["status"],
+  failureKind?: PreflightAssessment["failureKind"],
+): PreflightAssessment {
+  return {
+    status,
+    provider: "kyberswap",
+    testAmountUsd: 50,
+    buy: null,
+    sell: null,
+    roundTripRetentionPercent: null,
+    roundTripLossPercent: null,
+    quoteTtlSeconds: 30,
+    reasons: ["test"],
+    ...(failureKind ? { failureKind } : {}),
+  };
+}
+
+function onchain(overrides: Partial<OnchainPreflightAssessment> = {}): OnchainPreflightAssessment {
+  return {
+    status: "pass",
+    readOnly: true,
+    chainId: 1,
+    blockNumber: 1,
+    blockTimestamp: "2026-09-08T12:00:00.000Z",
+    blockAgeSeconds: 12,
+    contractCodePresent: true,
+    checkedAt: "2026-09-08T12:00:12.000Z",
+    reasons: ["test"],
+    ...overrides,
+  };
+}
+
+function sourceItem(
+  results: DataSourceCheckResult[],
+): DataSourceQualityItem {
+  const { snapshot, chartModel } = fixtures();
+  snapshot.assets = results.map((_, index) => asset({ symbol: `T${index}` }));
+  snapshot.sourceChecks = { dexscreener: results };
+  return assessDataSourceQuality(snapshot, chartModel).sources.find(
+    (item) => item.source === "dexscreener",
+  )!;
+}
+
+function observationRecord(
+  bucketTimeMs: number,
+  item: DataSourceQualityItem | PaperDataSourceObservation,
+): PaperScanRecord {
+  return {
+    schemaVersion: 1,
+    id: String(bucketTimeMs),
+    bucketTimeMs,
+    generatedAt: new Date(bucketTimeMs).toISOString(),
+    walletAddress: "0x0000000000000000000000000000000000000001",
+    portfolioValueUsd: 100,
+    executionLocked: true,
+    prices: {},
+    signals: [],
+    dataSourceQuality: [item],
+  };
+}
+
+describe("data source quality definition v2", () => {
+  describe("classification per source", () => {
+    it("classifies KyberSwap quotes from their status", () => {
+      expect(quoteSourceCheck(quote("pass"))).toEqual({ outcome: "success" });
+      expect(quoteSourceCheck(quote("blocked"))).toEqual({ outcome: "policy-blocked" });
+      expect(quoteSourceCheck(quote("unavailable", "rate-limited"))).toEqual({
+        outcome: "source-unavailable",
+        failureKind: "rate-limited",
+      });
+      expect(quoteSourceCheck(quote("unavailable"))).toEqual({
+        outcome: "source-unavailable",
+        failureKind: "other",
+      });
+    });
+
+    it("classifies Ethereum RPC state from structured fields", () => {
+      expect(onchainSourceCheck(onchain())).toEqual({ outcome: "success" });
+      expect(onchainSourceCheck(onchain({ status: "unavailable", failureKind: "timeout" }))).toEqual({
+        outcome: "source-unavailable",
+        failureKind: "timeout",
+      });
+      expect(onchainSourceCheck(onchain({ status: "blocked", blockAgeSeconds: 181 }))).toEqual({
+        outcome: "source-stale",
+      });
+      expect(onchainSourceCheck(onchain({ status: "blocked", contractCodePresent: false }))).toEqual({
+        outcome: "policy-blocked",
+      });
+      expect(onchainSourceCheck(onchain({ status: "blocked", chainId: 5 }))).toEqual({
+        outcome: "source-unavailable",
+        failureKind: "other",
+      });
+      expect(onchainSourceCheck(onchain({ status: "blocked", blockAgeSeconds: -60 }))).toEqual({
+        outcome: "source-unavailable",
+        failureKind: "other",
+      });
+    });
+
+    it("classifies a fetched GeckoTerminal chart as success, policy-blocked or stale", () => {
+      expect(fetchedChartSourceCheck("ready")).toEqual({ outcome: "success" });
+      expect(fetchedChartSourceCheck("insufficient")).toEqual({ outcome: "policy-blocked" });
+      expect(fetchedChartSourceCheck("unavailable")).toEqual({ outcome: "source-stale" });
+    });
+
+    it("applies the classification to KyberSwap and Ethereum RPC quality items", () => {
+      const { snapshot, chartModel } = fixtures();
+      snapshot.assets = [
+        asset({ symbol: "A", quotePreflight: quote("pass"), onchainPreflight: onchain() }),
+        asset({
+          symbol: "B",
+          quotePreflight: quote("blocked"),
+          onchainPreflight: onchain({ status: "blocked", contractCodePresent: false }),
+        }),
+      ];
+      const sources = assessDataSourceQuality(snapshot, chartModel).sources;
+      expect(sources.find((item) => item.source === "kyberswap")).toMatchObject({
+        status: "healthy",
+        successfulCount: 1,
+        policyBlockedCount: 1,
+        coveragePercent: 100,
+      });
+      expect(sources.find((item) => item.source === "ethereum-rpc")).toMatchObject({
+        status: "healthy",
+        successfulCount: 1,
+        policyBlockedCount: 1,
+        coveragePercent: 100,
+      });
+    });
+
+    it("uses adapter-recorded GeckoTerminal checks", () => {
+      const { snapshot, chartModel } = fixtures();
+      chartModel.sourceChecks = {
+        geckoterminal: [
+          { outcome: "success" },
+          { outcome: "source-stale" },
+          { outcome: "policy-blocked" },
+        ],
+      };
+      expect(
+        assessDataSourceQuality(snapshot, chartModel).sources.find(
+          (item) => item.source === "geckoterminal",
+        ),
+      ).toMatchObject({
+        status: "healthy",
+        requestedCount: 3,
+        successfulCount: 1,
+        sourceStaleCount: 1,
+        policyBlockedCount: 1,
+        coveragePercent: 100,
+      });
+    });
+  });
+
+  it("reports a source whose targets are all policy-blocked as healthy at 100%", () => {
+    expect(sourceItem([{ outcome: "policy-blocked" }, { outcome: "policy-blocked" }])).toMatchObject({
+      status: "healthy",
+      coveragePercent: 100,
+      policyBlockedCount: 2,
+      sourceUnavailableCount: 0,
+    });
+  });
+
+  it("reports one source-unavailable check as degraded", () => {
+    expect(
+      sourceItem([
+        { outcome: "success" },
+        { outcome: "policy-blocked" },
+        { outcome: "source-unavailable", failureKind: "timeout" },
+      ]),
+    ).toMatchObject({ status: "degraded", coveragePercent: 50, sourceUnavailableCount: 1 });
+  });
+
+  it("reports all-failed checks as unavailable and opens an incident after three scans", () => {
+    const failed = sourceItem([
+      { outcome: "source-unavailable", failureKind: "http-error" },
+      { outcome: "source-unavailable", failureKind: "http-error" },
+    ]);
+    expect(failed).toMatchObject({ status: "unavailable", coveragePercent: 0 });
+
+    const now = Date.parse("2026-09-08T12:00:00.000Z");
+    const records = [10, 5, 0].map((minutes) => observationRecord(now - minutes * 60_000, failed));
+    expect(
+      calculateDataSourceIncidents(records.slice(0, 2), now).find((item) => item.source === "dexscreener"),
+    ).toMatchObject({ status: "collecting", incidentCount24h: 0, currentFailureStreak: 2 });
+    expect(
+      calculateDataSourceIncidents(records, now).find((item) => item.source === "dexscreener"),
+    ).toMatchObject({ status: "incident", incidentCount24h: 1, currentFailureStreak: 3 });
+  });
+
+  it("keeps a source with no targets unavailable", () => {
+    expect(sourceItem([])).toMatchObject({ status: "unavailable", requestedCount: 0, coveragePercent: 0 });
+  });
+
+  it("excludes source-stale checks from the coverage denominator", () => {
+    expect(sourceItem([{ outcome: "success" }, { outcome: "source-stale" }])).toMatchObject({
+      status: "healthy",
+      coveragePercent: 100,
+      sourceStaleCount: 1,
+      requestedCount: 2,
+    });
+    expect(
+      sourceItem([
+        { outcome: "success" },
+        { outcome: "source-stale" },
+        { outcome: "source-unavailable", failureKind: "parse-error" },
+      ]),
+    ).toMatchObject({ status: "degraded", coveragePercent: 50, sourceStaleCount: 1 });
+    expect(sourceItem([{ outcome: "source-stale" }])).toMatchObject({
+      status: "healthy",
+      coveragePercent: 100,
+    });
+  });
+
+  it("aggregates the failure breakdown per scan and over 24 hours", () => {
+    const item = sourceItem([
+      { outcome: "source-unavailable", failureKind: "rate-limited" },
+      { outcome: "source-unavailable", failureKind: "rate-limited" },
+      { outcome: "source-unavailable", failureKind: "timeout" },
+      { outcome: "source-unavailable", failureKind: "http-error" },
+      { outcome: "source-unavailable", failureKind: "parse-error" },
+      { outcome: "source-unavailable" },
+      { outcome: "success" },
+      { outcome: "policy-blocked" },
+    ]);
+    expect(item.failureBreakdown).toEqual({
+      rateLimited: 2,
+      timeout: 1,
+      httpError: 1,
+      parseError: 1,
+      other: 1,
+    });
+
+    const now = Date.parse("2026-09-08T12:00:00.000Z");
+    const records = [5, 0].map((minutes) => observationRecord(now - minutes * 60_000, item));
+    expect(
+      calculateDataSourceQualityHistory(records, now).find((entry) => entry.source === "dexscreener")
+        ?.failureBreakdown,
+    ).toEqual({ rateLimited: 4, timeout: 2, httpError: 2, parseError: 2, other: 2 });
+  });
+
+  it("excludes legacy observations from 24-hour statistics but uses them for freshness", () => {
+    const now = Date.parse("2026-09-08T12:00:00.000Z");
+    const legacyDegraded: PaperDataSourceObservation = {
+      source: "kyberswap",
+      status: "degraded",
+      coveragePercent: 87.5,
+      dataAgeSeconds: null,
+    };
+    const legacyRecords = Array.from({ length: 12 }, (_, index) =>
+      observationRecord(now - (11 - index) * 5 * 60_000, legacyDegraded),
+    );
+
+    const legacyOnly = calculateDataSourceQualityHistory(legacyRecords, now).find(
+      (item) => item.source === "kyberswap",
+    );
+    expect(legacyOnly).toMatchObject({
+      status: "collecting",
+      observationCount: 0,
+      averageCoveragePercent: 0,
+      lastObservedAt: new Date(now).toISOString(),
+      observationAgeSeconds: 0,
+    });
+    expect(
+      calculateDataSourceQualityHistory(legacyRecords, now + 16 * 60_000).find(
+        (item) => item.source === "kyberswap",
+      ),
+    ).toMatchObject({ status: "stale", observationCount: 0 });
+
+    const legacyUnavailable = { ...legacyDegraded, status: "unavailable" as const, coveragePercent: 0 };
+    const failedLegacy = [10, 5, 0].map((minutes) =>
+      observationRecord(now - minutes * 60_000, legacyUnavailable),
+    );
+    expect(
+      calculateDataSourceIncidents(failedLegacy, now).find((item) => item.source === "kyberswap"),
+    ).toMatchObject({ status: "collecting", incidentCount24h: 0, currentFailureStreak: 0 });
+  });
 });

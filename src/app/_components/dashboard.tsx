@@ -166,7 +166,8 @@ function DataSourceQualityBoard({
                 <b>{dataSourceStatusLabels[source.status]}</b>
               </div>
               <strong>{source.coveragePercent.toFixed(1)}%</strong>
-              <small>{source.successfulCount}/{source.observedCount} COMPLETE · MISSING {(100 - source.coveragePercent).toFixed(1)}%</small>
+              <small>{source.successfulCount}/{source.requestedCount} COMPLETE · FETCH MISSING {(100 - source.coveragePercent).toFixed(1)}%</small>
+              <small>POLICY BLOCKED {source.policyBlockedCount} · STALE DATA {source.sourceStaleCount}</small>
               <small>{source.dataAgeSeconds === null ? "SOURCE AGE N/A" : `MAX AGE ${source.dataAgeSeconds.toFixed(0)}S`}</small>
               <p>{source.reasons[0]}</p>
               {historical ? (
@@ -1671,7 +1672,7 @@ export function Dashboard({
       </section>
 
       <footer className="footer shell">
-        <span>SUMI TRADE LAB / BUILD 1.28</span>
+        <span>SUMI TRADE LAB / BUILD 1.29</span>
         <span>READ-ONLY · STRATEGY LAB · PORTFOLIO RISK · ETHEREUM</span>
       </footer>
     </main>

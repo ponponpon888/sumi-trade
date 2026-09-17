@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyMarket } from "@/lib/portfolio";
+import { classifyMarket, marketSourceCheck } from "@/lib/portfolio";
 import type { MarketData } from "@/lib/types";
 
 function market(overrides: Partial<MarketData> = {}): MarketData {
@@ -37,5 +37,23 @@ describe("classifyMarket", () => {
 
   it("blocks missing market routes", () => {
     expect(classifyMarket(null).tradability).toBe("blocked");
+  });
+});
+
+describe("marketSourceCheck", () => {
+  it("separates a failed Dexscreener request from a response without a usable pair", () => {
+    expect(marketSourceCheck({ status: "found", market: market() })).toEqual({ outcome: "success" });
+    expect(marketSourceCheck({ status: "no-pair" })).toEqual({ outcome: "policy-blocked" });
+    expect(marketSourceCheck({ status: "found", market: market({ priceUsd: null }) })).toEqual({
+      outcome: "policy-blocked",
+    });
+    expect(marketSourceCheck({ status: "failed", failureKind: "rate-limited" })).toEqual({
+      outcome: "source-unavailable",
+      failureKind: "rate-limited",
+    });
+    expect(marketSourceCheck(undefined)).toEqual({
+      outcome: "source-unavailable",
+      failureKind: "other",
+    });
   });
 });

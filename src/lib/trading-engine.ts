@@ -19,10 +19,15 @@ import {
 import { createStrategyPlan } from "@/lib/strategy";
 import { getTrendScoutSnapshot } from "@/lib/trend-scout";
 import { applyTrendBuyGates } from "@/lib/trend-buy-gate";
-import { assessDataSourceQuality } from "@/lib/data-source-quality";
+import {
+  assessDataSourceQuality,
+  fetchedChartSourceCheck,
+} from "@/lib/data-source-quality";
+import { sourceUnavailable } from "@/lib/data-source-failure";
 import type {
   ChartAnalysis,
   ChartModelSnapshot,
+  DataSourceCheckResult,
   DataSourceQualitySnapshot,
   PaperJournalSnapshot,
   PortfolioAsset,
@@ -31,6 +36,10 @@ import type {
   SafetyControlSnapshot,
   TrendScoutSnapshot,
 } from "@/lib/types";
+
+function unavailableBenchmark(): ChartModelSnapshot["ethBenchmark"] {
+  return { status: "unavailable", sparkline: [], correlationSeries: [] };
+}
 
 function eligibleChartAssets(snapshot: PortfolioSnapshot): PortfolioAsset[] {
   return snapshot.assets
@@ -49,12 +58,15 @@ export async function getChartModelSnapshot(
   const ethPairAddress = snapshot.assets.find(
     (asset) => asset.symbol === "ETH",
   )?.pairAddress;
-  const [analyses, ethBenchmark] = await Promise.all([
+  const [chartResults, benchmarkResult] = await Promise.all([
     Promise.all(
-      selected.map(async (asset): Promise<ChartAnalysis> => {
+      selected.map(async (asset): Promise<{
+        analysis: ChartAnalysis;
+        check: DataSourceCheckResult;
+      }> => {
         try {
           const candles = await getPoolOhlcv(asset.pairAddress as string);
-          return analyzeChart(
+          const analysis = analyzeChart(
             asset.symbol,
             candles,
             snapshot.totalUsd,
@@ -64,17 +76,25 @@ export async function getChartModelSnapshot(
               volume24hUsd: asset.volume24hUsd,
             },
           );
-        } catch {
-          return createUnavailableChartAnalysis(
-            asset.symbol,
-            "OHLCV履歴を取得できませんでした。",
-          );
+          return { analysis, check: fetchedChartSourceCheck(analysis.status) };
+        } catch (error) {
+          return {
+            analysis: createUnavailableChartAnalysis(
+              asset.symbol,
+              "OHLCV履歴を取得できませんでした。",
+            ),
+            check: sourceUnavailable(error),
+          };
         }
       }),
     ),
-    (async (): Promise<ChartModelSnapshot["ethBenchmark"]> => {
+    (async (): Promise<{
+      benchmark: ChartModelSnapshot["ethBenchmark"];
+      check: DataSourceCheckResult | null;
+    }> => {
       if (!ethPairAddress) {
-        return { status: "unavailable", sparkline: [], correlationSeries: [] };
+        // No ETH pair means no benchmark target, matching the quality target count.
+        return { benchmark: unavailableBenchmark(), check: null };
       }
       try {
         const candles = await getPoolOhlcv(ethPairAddress);
@@ -89,14 +109,27 @@ export async function getChartModelSnapshot(
         const fresh = latest
           ? nowSeconds - (latest.timestamp + 5 * 60) <= MAX_CHART_DATA_AGE_SECONDS
           : false;
-        return sparkline.length >= 13 && fresh
-          ? { status: "ready", sparkline, correlationSeries }
-          : { status: "unavailable", sparkline: [], correlationSeries: [] };
-      } catch {
-        return { status: "unavailable", sparkline: [], correlationSeries: [] };
+        if (sparkline.length < 13) {
+          return { benchmark: unavailableBenchmark(), check: { outcome: "policy-blocked" } };
+        }
+        if (!fresh) {
+          return { benchmark: unavailableBenchmark(), check: { outcome: "source-stale" } };
+        }
+        return {
+          benchmark: { status: "ready", sparkline, correlationSeries },
+          check: { outcome: "success" },
+        };
+      } catch (error) {
+        return { benchmark: unavailableBenchmark(), check: sourceUnavailable(error) };
       }
     })(),
   ]);
+  const analyses = chartResults.map((result) => result.analysis);
+  const ethBenchmark = benchmarkResult.benchmark;
+  const geckoterminalChecks = [
+    ...chartResults.map((result) => result.check),
+    ...(benchmarkResult.check ? [benchmarkResult.check] : []),
+  ];
 
   const readyAssetCount = analyses.filter(
     (analysis) => analysis.status === "ready",
@@ -122,6 +155,7 @@ export async function getChartModelSnapshot(
     analyses,
     ethBenchmark,
     warnings,
+    sourceChecks: { geckoterminal: geckoterminalChecks },
   };
 }
 

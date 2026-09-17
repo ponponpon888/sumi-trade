@@ -4,6 +4,7 @@ import type {
   PaperAssetPerformance,
   PaperConfidenceCalibration,
   PaperConfidenceBandPerformance,
+  PaperDataSourceObservation,
   PaperDriftPerformance,
   PaperDataQualityPerformance,
   PaperDecisionDataQuality,
@@ -28,6 +29,7 @@ import {
   assessDataSourceQuality,
   calculateDataSourceIncidents,
   calculateDataSourceQualityHistory,
+  DATA_SOURCE_QUALITY_DEFINITION,
 } from "@/lib/data-source-quality";
 
 export const JOURNAL_WINDOW_DAYS = 7 as const;
@@ -85,6 +87,14 @@ function decisionDataQuality(
   record: PaperScanRecord,
 ): PaperDecisionDataQuality | undefined {
   if (!record.dataSourceQuality?.length) return undefined;
+  // Observations saved under the legacy definition go to the LEGACY / unknown band.
+  if (
+    !record.dataSourceQuality.every(
+      (observation) => observation.qualityDefinition === DATA_SOURCE_QUALITY_DEFINITION,
+    )
+  ) {
+    return undefined;
+  }
   const bySource = new Map(
     record.dataSourceQuality.map((observation) => [
       observation.source,
@@ -215,15 +225,21 @@ export function createPaperScanRecord(
     data.plan.signals.map((signal) => [signal.symbol, signal]),
   );
   const signals: PaperSignalObservation[] = [];
-  const dataSourceQuality = assessDataSourceQuality(
+  const dataSourceQuality: PaperDataSourceObservation[] = assessDataSourceQuality(
     data.snapshot,
     data.chartModel,
     nowMs,
-  ).sources.map(({ source, status, coveragePercent, dataAgeSeconds }) => ({
-    source,
-    status,
-    coveragePercent,
-    dataAgeSeconds,
+  ).sources.map((item) => ({
+    source: item.source,
+    status: item.status,
+    coveragePercent: item.coveragePercent,
+    dataAgeSeconds: item.dataAgeSeconds,
+    qualityDefinition: item.qualityDefinition,
+    requestedCount: item.requestedCount,
+    sourceUnavailableCount: item.sourceUnavailableCount,
+    sourceStaleCount: item.sourceStaleCount,
+    policyBlockedCount: item.policyBlockedCount,
+    failureBreakdown: item.failureBreakdown,
   }));
 
   for (const analysis of data.chartModel.analyses) {

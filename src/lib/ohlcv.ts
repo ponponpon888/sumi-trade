@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { CHART_CANDLE_LIMIT, GECKOTERMINAL_ORIGIN } from "@/lib/config";
+import { DataSourceHttpError } from "@/lib/data-source-failure";
 import type { OhlcvCandle } from "@/lib/types";
 
 const ohlcvRowSchema = z.tuple([
@@ -58,7 +59,10 @@ export async function getPoolOhlcv(pairAddress: string): Promise<OhlcvCandle[]> 
   );
 
   if (!response.ok) {
-    throw new Error(`OHLCV request failed (${response.status}).`);
+    throw new DataSourceHttpError(
+      response.status,
+      `OHLCV request failed (${response.status}).`,
+    );
   }
 
   return parseOhlcvResponse(await response.json());

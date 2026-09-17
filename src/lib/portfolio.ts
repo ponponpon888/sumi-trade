@@ -10,7 +10,7 @@ import {
   getBlockscoutPortfolio,
   getContractSafetyAssessments,
 } from "@/lib/blockscout";
-import { getTokenMarkets } from "@/lib/dexscreener";
+import { getTokenMarketLookups, type MarketLookup } from "@/lib/dexscreener";
 import { getOnchainPreflightAssessments } from "@/lib/ethereum-preflight";
 import { asFiniteNumber, unitsToNumber } from "@/lib/number";
 import { getQuotePreflightAssessments } from "@/lib/kyberswap";
@@ -19,6 +19,7 @@ import {
   TOKEN_POLICY_BY_ADDRESS,
 } from "@/lib/token-policy";
 import type {
+  DataSourceCheckResult,
   MarketData,
   PortfolioAsset,
   PortfolioSnapshot,
@@ -64,6 +65,18 @@ export function classifyMarket(market: MarketData | null): {
   };
 }
 
+/** A response without a usable priced pair is a market fact, not a source failure. */
+export function marketSourceCheck(lookup: MarketLookup | undefined): DataSourceCheckResult {
+  if (!lookup) return { outcome: "source-unavailable", failureKind: "other" };
+  if (lookup.status === "failed") {
+    return { outcome: "source-unavailable", failureKind: lookup.failureKind };
+  }
+  if (lookup.status === "no-pair" || lookup.market.priceUsd === null) {
+    return { outcome: "policy-blocked" };
+  }
+  return { outcome: "success" };
+}
+
 export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
   const walletAddress = getWalletAddress();
   const { account, tokenBalances } = await getBlockscoutPortfolio(walletAddress);
@@ -79,12 +92,19 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     rawBalanceByAddress.has(policy.contractAddress.toLowerCase()),
   );
   const heldAddresses = heldPolicies.map((policy) => policy.contractAddress);
-  const [markets, safetyByAddress, preflightByAddress, onchainByAddress] = await Promise.all([
-    getTokenMarkets([...heldAddresses, WRAPPED_ETH_ADDRESS]),
+  const [marketLookups, safetyByAddress, preflightByAddress, onchainByAddress] = await Promise.all([
+    getTokenMarketLookups([...heldAddresses, WRAPPED_ETH_ADDRESS]),
     getContractSafetyAssessments(heldAddresses),
     getQuotePreflightAssessments(heldAddresses, ethPrice),
     getOnchainPreflightAssessments(heldAddresses),
   ]);
+  const markets = new Map(
+    [...marketLookups].map(([address, lookup]) => [
+      address,
+      lookup.status === "found" ? lookup.market : null,
+    ]),
+  );
+  const marketChecks = new Map<PortfolioAsset, DataSourceCheckResult>();
 
   const assets: PortfolioAsset[] = heldPolicies.map((policy) => {
     const normalizedAddress = policy.contractAddress.toLowerCase();
@@ -102,7 +122,7 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     const priceUsd = market?.priceUsd ?? fallbackPrice;
     const classification = classifyMarket(market);
 
-    return {
+    const asset: PortfolioAsset = {
       symbol: policy.symbol,
       name: policy.label,
       contractAddress: policy.contractAddress,
@@ -121,12 +141,14 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       quotePreflight: preflightByAddress.get(normalizedAddress) ?? null,
       onchainPreflight: onchainByAddress.get(normalizedAddress) ?? null,
     };
+    marketChecks.set(asset, marketSourceCheck(marketLookups.get(normalizedAddress)));
+    return asset;
   });
 
   const gasBalanceEth = unitsToNumber(account.coin_balance, 18);
   const gasBalanceUsd = gasBalanceEth * ethPrice;
   const ethMarket = markets.get(WRAPPED_ETH_ADDRESS) ?? null;
-  assets.push({
+  const ethAsset: PortfolioAsset = {
     symbol: "ETH",
     name: "Ethereum / gas reserve",
     contractAddress: null,
@@ -144,7 +166,9 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     contractSafety: null,
     quotePreflight: null,
     onchainPreflight: null,
-  });
+  };
+  marketChecks.set(ethAsset, marketSourceCheck(marketLookups.get(WRAPPED_ETH_ADDRESS)));
+  assets.push(ethAsset);
 
   assets.sort((left, right) => right.valueUsd - left.valueUsd);
 
@@ -225,5 +249,11 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     assets,
     ignoredTokenCount,
     warnings,
+    sourceChecks: {
+      // Same targets as the dexscreener quality count: assets with a positive amount.
+      dexscreener: assets
+        .filter((asset) => asset.amount > 0)
+        .map((asset) => marketChecks.get(asset) ?? marketSourceCheck(undefined)),
+    },
   };
 }

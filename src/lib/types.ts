@@ -56,6 +56,8 @@ export interface PreflightAssessment {
   roundTripLossPercent: number | null;
   quoteTtlSeconds: 30;
   reasons: string[];
+  /** Set only when status is "unavailable" because the quote request itself failed. */
+  failureKind?: DataSourceFailureKind;
 }
 
 export interface ChartMarketContext {
@@ -239,6 +241,8 @@ export interface ChartModelSnapshot {
     correlationSeries: CorrelationPricePoint[];
   };
   warnings: string[];
+  /** One result per chart target (selected assets, then the ETH benchmark when it has a pair). */
+  sourceChecks?: { geckoterminal: DataSourceCheckResult[] };
 }
 
 export type DataSourceId =
@@ -248,14 +252,56 @@ export type DataSourceId =
   | "ethereum-rpc"
   | "kyberswap";
 
+/**
+ * Outcome of one data-source check.
+ * - policy-blocked: the source responded normally, but the target did not meet a trading condition.
+ * - source-stale: the source responded, but its data was older than the freshness limit.
+ * - source-unavailable: the request failed, timed out, returned a non-OK status or could not be parsed.
+ * Only source-unavailable counts as a source failure.
+ */
+export type DataSourceCheckOutcome =
+  | "success"
+  | "policy-blocked"
+  | "source-stale"
+  | "source-unavailable";
+
+export type DataSourceFailureKind =
+  | "rate-limited"
+  | "timeout"
+  | "http-error"
+  | "parse-error"
+  | "other";
+
+export interface DataSourceCheckResult {
+  outcome: DataSourceCheckOutcome;
+  /** Present only for source-unavailable. */
+  failureKind?: DataSourceFailureKind;
+}
+
+export interface DataSourceFailureBreakdown {
+  rateLimited: number;
+  timeout: number;
+  httpError: number;
+  parseError: number;
+  other: number;
+}
+
 export interface DataSourceQualityItem {
   source: DataSourceId;
   status: "healthy" | "degraded" | "unavailable";
+  /** Same as requestedCount. Kept for compatibility. */
   observedCount: number;
   successfulCount: number;
+  /** success / (success + source-unavailable). policy-blocked and source-stale are excluded. */
   coveragePercent: number;
   dataAgeSeconds: number | null;
   reasons: string[];
+  qualityDefinition: 2;
+  requestedCount: number;
+  sourceUnavailableCount: number;
+  sourceStaleCount: number;
+  policyBlockedCount: number;
+  failureBreakdown: DataSourceFailureBreakdown;
 }
 
 export interface DataSourceQualitySnapshot {
@@ -270,6 +316,13 @@ export interface PaperDataSourceObservation {
   status: DataSourceQualityItem["status"];
   coveragePercent: number;
   dataAgeSeconds: number | null;
+  /** Absent on observations saved before the v2 definition (legacy). */
+  qualityDefinition?: 2;
+  requestedCount?: number;
+  sourceUnavailableCount?: number;
+  sourceStaleCount?: number;
+  policyBlockedCount?: number;
+  failureBreakdown?: DataSourceFailureBreakdown;
 }
 
 export type PaperDecisionDataQualityStatus =
@@ -294,6 +347,8 @@ export interface DataSourceQualityHistoryItem {
   availabilityPercent: number;
   averageCoveragePercent: number;
   currentFailureStreak: number;
+  /** Summed over v2 observations in the 24-hour window. */
+  failureBreakdown: DataSourceFailureBreakdown;
 }
 
 export interface DataSourceIncidentItem {
@@ -326,6 +381,8 @@ export interface OnchainPreflightAssessment {
   contractCodePresent: boolean | null;
   checkedAt: string;
   reasons: string[];
+  /** Set only when status is "unavailable". */
+  failureKind?: DataSourceFailureKind;
 }
 
 export interface PortfolioAsset {
@@ -361,6 +418,8 @@ export interface PortfolioSnapshot {
   assets: PortfolioAsset[];
   ignoredTokenCount: number;
   warnings: string[];
+  /** One result per asset with a positive amount, including the ETH gas asset. */
+  sourceChecks?: { dexscreener: DataSourceCheckResult[] };
 }
 
 export interface StrategySignal {

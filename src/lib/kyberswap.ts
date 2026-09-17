@@ -8,6 +8,10 @@ import {
   PREFLIGHT_QUOTE_USD,
 } from "@/lib/config";
 import {
+  classifyDataSourceFailure,
+  DataSourceHttpError,
+} from "@/lib/data-source-failure";
+import {
   assessQuotePreflight,
   type RawPreflightRoute,
   unavailableQuotePreflight,
@@ -66,7 +70,10 @@ async function getRoute(
   );
   if ([400, 404, 422].includes(response.status)) return null;
   if (!response.ok) {
-    throw new Error(`KyberSwap route request failed (${response.status}).`);
+    throw new DataSourceHttpError(
+      response.status,
+      `KyberSwap route request failed (${response.status}).`,
+    );
   }
 
   const parsed = routeSchema.parse(await response.json());
@@ -120,8 +127,11 @@ async function getTokenPreflight(
       sell,
       MAX_PREFLIGHT_ROUND_TRIP_LOSS_PERCENT,
     );
-  } catch {
-    return unavailableQuotePreflight(PREFLIGHT_QUOTE_USD);
+  } catch (error) {
+    return {
+      ...unavailableQuotePreflight(PREFLIGHT_QUOTE_USD),
+      failureKind: classifyDataSourceFailure(error),
+    };
   }
 }
 

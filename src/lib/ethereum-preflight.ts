@@ -1,7 +1,22 @@
 import "server-only";
 
+import {
+  classifyDataSourceFailure,
+  DataSourceHttpError,
+  DataSourceParseError,
+} from "@/lib/data-source-failure";
 import { assessEthereumState } from "@/lib/ethereum-preflight-core";
-import type { OnchainPreflightAssessment } from "@/lib/types";
+import type {
+  DataSourceFailureKind,
+  OnchainPreflightAssessment,
+} from "@/lib/types";
+
+function withFailureKind(
+  assessment: OnchainPreflightAssessment,
+  failureKind: DataSourceFailureKind,
+): OnchainPreflightAssessment {
+  return assessment.status === "unavailable" ? { ...assessment, failureKind } : assessment;
+}
 
 interface RpcResponse {
   id?: number;
@@ -24,15 +39,18 @@ export async function getOnchainPreflightAssessments(
     return new Map(
       unique.map((address) => [
         address,
-        assessEthereumState(
-          {
-            rpcConfigured: false,
-            chainId: null,
-            blockNumber: null,
-            blockTimestampSeconds: null,
-            contractCode: null,
-          },
-          nowSeconds,
+        withFailureKind(
+          assessEthereumState(
+            {
+              rpcConfigured: false,
+              chainId: null,
+              blockNumber: null,
+              blockTimestampSeconds: null,
+              contractCode: null,
+            },
+            nowSeconds,
+          ),
+          "other",
         ),
       ]),
     );
@@ -56,9 +74,13 @@ export async function getOnchainPreflightAssessments(
       cache: "no-store",
       signal: AbortSignal.timeout(8_000),
     });
-    if (!response.ok) throw new Error(`Ethereum RPC ${response.status}`);
+    if (!response.ok) {
+      throw new DataSourceHttpError(response.status, `Ethereum RPC ${response.status}`);
+    }
     const replies = (await response.json()) as RpcResponse[];
-    if (!Array.isArray(replies)) throw new Error("Ethereum RPC batch response missing");
+    if (!Array.isArray(replies)) {
+      throw new DataSourceParseError("Ethereum RPC batch response missing");
+    }
     const byId = new Map(replies.map((reply) => [reply.id, reply.result]));
     const chainId = hexQuantity(byId.get(1));
     const block = byId.get(2);
@@ -72,34 +94,42 @@ export async function getOnchainPreflightAssessments(
     return new Map(
       unique.map((address, index) => [
         address,
-        assessEthereumState(
-          {
-            rpcConfigured: true,
-            chainId,
-            blockNumber,
-            blockTimestampSeconds,
-            contractCode:
-              typeof byId.get(100 + index) === "string"
-                ? (byId.get(100 + index) as string)
-                : null,
-          },
-          nowSeconds,
+        // An OK response with missing fields is an incomplete (unparseable) reply.
+        withFailureKind(
+          assessEthereumState(
+            {
+              rpcConfigured: true,
+              chainId,
+              blockNumber,
+              blockTimestampSeconds,
+              contractCode:
+                typeof byId.get(100 + index) === "string"
+                  ? (byId.get(100 + index) as string)
+                  : null,
+            },
+            nowSeconds,
+          ),
+          "parse-error",
         ),
       ]),
     );
-  } catch {
+  } catch (error) {
+    const failureKind = classifyDataSourceFailure(error);
     return new Map(
       unique.map((address) => [
         address,
-        assessEthereumState(
-          {
-            rpcConfigured: true,
-            chainId: null,
-            blockNumber: null,
-            blockTimestampSeconds: null,
-            contractCode: null,
-          },
-          nowSeconds,
+        withFailureKind(
+          assessEthereumState(
+            {
+              rpcConfigured: true,
+              chainId: null,
+              blockNumber: null,
+              blockTimestampSeconds: null,
+              contractCode: null,
+            },
+            nowSeconds,
+          ),
+          failureKind,
         ),
       ]),
     );
