@@ -226,3 +226,11 @@ JSONには対象期間と各分析の対象モデルも明記します。採点�
 新しい観測には`qualityDefinition: 2`を付けて保存します。24時間の品質統計と障害判定は定義v2の観測だけを集計し、旧定義の観測は最終観測時刻（鮮度判定）にだけ使用します。そのため、リリース直後の約1時間（12回の観測）は収集中として表示されます。判断時データ品質別の成績と取得元別の影響分析でも、旧定義の記録は`LEGACY / UNKNOWN`として分離します。保存済みレコードの書き換えは行いません。
 
 ダッシュボードの取得元カードには、取引条件未達とデータ鮮度超過の件数を表示します。health APIの項目は追加していません。この変更は監視表示と品質集計に限られ、BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
+
+## v1.29.1 KyberSwap見積スキーマの不一致修正
+
+KyberSwap Aggregator APIが返す `routeSummary.timestamp` はUNIX秒の数値ですが、スキーマが文字列だけを受け付けていたため、ルート取得が成功するたびにparse-errorとなり、kyberswapが全スキャンで取得失敗として記録されていました。結果として取得元品質がdegraded、障害状態がincidentのまま固定され、本番ヘルスチェックがブロックし続け、その間は双方向見積が成立せずFail Closedで新規BUYが停止していました。
+
+`timestamp` とUSD建ての値（`amountInUsd` / `amountOutUsd` / `gasUsd`）を文字列・数値の双方で受け取るようにし、`quotedAt` はUNIX秒をISO文字列へ正規化します。wei建ての `amountIn` / `amountOut` は精度のため文字列のみを受け付けます。あわせて、実APIと同じ形の成功レスポンスで往復見積がpassすることを検証するテストを追加しました。従来のテストは失敗系だけを網羅しており、成功レスポンスを一度もパースしていなかったため、この不一致を検出できませんでした。
+
+BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。

@@ -20,16 +20,25 @@ import type { PreflightAssessment } from "@/lib/types";
 
 const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
+/**
+ * KyberSwapはUSD建ての値を文字列でも数値でも返すことがあるため、どちらも受け取る。
+ * 片方だけを許すスキーマにすると、相手側の型変更だけで取得元全体が
+ * parse-errorとなり、数日単位で新規BUYが停止する。
+ */
+const numberLike = z.union([z.string(), z.number()]);
+
 const routeSchema = z.object({
   code: z.number(),
   data: z.object({
     routeSummary: z.object({
+      // wei建ての整数は精度のため文字列のみを受け付ける
       amountIn: z.string(),
-      amountInUsd: z.string(),
+      amountInUsd: numberLike,
       amountOut: z.string(),
-      amountOutUsd: z.string(),
-      gasUsd: z.string(),
-      timestamp: z.string(),
+      amountOutUsd: numberLike,
+      gasUsd: numberLike,
+      // 実APIはUNIX秒の「数値」を返す（以前のz.string()では必ずZodErrorになっていた）
+      timestamp: numberLike,
       route: z.array(
         z.array(
           z.object({
@@ -41,9 +50,19 @@ const routeSchema = z.object({
   }),
 });
 
-function finite(value: string): number {
-  const parsed = Number(value);
+function finite(value: string | number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** UNIX秒（数値・数値文字列）はISO文字列へ、ISO文字列などはそのまま返す。 */
+function quotedAtIso(timestamp: string | number): string {
+  const seconds = typeof timestamp === "number" ? timestamp : Number(timestamp);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return new Date(seconds * 1_000).toISOString();
+  }
+  if (typeof timestamp === "string" && timestamp.trim() !== "") return timestamp;
+  return new Date().toISOString();
 }
 
 async function getRoute(
@@ -86,7 +105,7 @@ async function getRoute(
     amountOutUsd: finite(summary.amountOutUsd),
     gasUsd: finite(summary.gasUsd),
     exchanges: summary.route.flat().map((step) => step.exchange),
-    quotedAt: summary.timestamp,
+    quotedAt: quotedAtIso(summary.timestamp),
   };
 }
 
