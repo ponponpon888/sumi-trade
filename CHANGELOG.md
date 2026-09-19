@@ -234,3 +234,5 @@ KyberSwap Aggregator APIが返す `routeSummary.timestamp` はUNIX秒の数値�
 `timestamp` とUSD建ての値（`amountInUsd` / `amountOutUsd` / `gasUsd`）を文字列・数値の双方で受け取るようにし、`quotedAt` はUNIX秒をISO文字列へ正規化します。wei建ての `amountIn` / `amountOut` は精度のため文字列のみを受け付けます。あわせて、実APIと同じ形の成功レスポンスで往復見積がpassすることを検証するテストを追加しました。従来のテストは失敗系だけを網羅しており、成功レスポンスを一度もパースしていなかったため、この不一致を検出できませんでした。
 
 BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
+
+health APIの`buildVersion`は`package.json`のversionから取得します。従来は文字列を直書きしていたため、versionだけを上げると本番ヘルスチェックが一致しないビルドを待ち続け、`HEALTH_CHECK_UNAVAILABLE`になっていました。両者の一致はテストで固定します。

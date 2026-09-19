@@ -3,6 +3,7 @@ import { GET } from "@/app/api/health/route";
 import { emptyPaperJournal } from "@/lib/paper-journal-core";
 import { getPaperJournalSnapshot } from "@/lib/paper-journal";
 import { calculateDataSourceQualityHistory } from "@/lib/data-source-quality";
+import packageJson from "../../../../package.json";
 
 vi.mock("@/lib/paper-journal", () => ({
   getPaperJournalSnapshot: vi.fn(), isPaperJournalConfigured: () => true,
@@ -21,6 +22,16 @@ describe("health source monitoring", () => {
     vi.mocked(getPaperJournalSnapshot).mockResolvedValue(emptyPaperJournal("disabled", "test"));
   });
   afterEach(() => vi.unstubAllEnvs());
+
+  /**
+   * 本番ヘルスチェックはhealth APIのbuildVersionとpackage.jsonのversionが
+   * 一致するまで待つ。両者がずれるとチェックが永久にリトライして
+   * HEALTH_CHECK_UNAVAILABLEになるため、ここで固定する。
+   */
+  it("reports the package version as buildVersion", async () => {
+    const body = await (await GET()).json();
+    expect(body.buildVersion).toBe(packageJson.version);
+  });
 
   it("reports missing history and incidents as collecting", async () => {
     const journal = emptyPaperJournal("disabled", "test");

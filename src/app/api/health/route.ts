@@ -1,3 +1,4 @@
+import { BUILD_VERSION } from "@/lib/build-version";
 import { getPaperEngineHealth } from "@/lib/paper-engine-health";
 import {
   getPaperJournalSnapshot,
@@ -55,7 +56,7 @@ export async function GET() {
     {
       ok: true,
       service: "sumi-trade-lab",
-      buildVersion: "1.29.0",
+      buildVersion: BUILD_VERSION,
       mode: "paper",
       executionLocked: true,
       configurationStatus: runtimeConfiguration.status,
