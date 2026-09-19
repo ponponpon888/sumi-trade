@@ -236,3 +236,15 @@ KyberSwap Aggregator APIが返す `routeSummary.timestamp` はUNIX秒の数値�
 BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
 
 health APIの`buildVersion`は`package.json`のversionから取得します。従来は文字列を直書きしていたため、versionだけを上げると本番ヘルスチェックが一致しないビルドを待ち続け、`HEALTH_CHECK_UNAVAILABLE`になっていました。両者の一致はテストで固定します。
+
+## v1.29.2 取得元の失敗内訳を外から読めるようにする
+
+health APIに`dataSourceQuality24h`と`dataSourceIncidents24h`を追加します。取得元ごとのstatus・24時間の可用率・平均取得率・連続失敗数・失敗の内訳（レート制限／タイムアウト／HTTPエラー／形式不正／その他）・障害の開始時刻を、秘密情報を含まない形で返します。
+
+失敗の内訳は実際にリクエストを投げて失敗した回数だけを数えます。したがって可用率が低いのに内訳がすべてゼロであれば、取得に失敗しているのではなく、そのスキャンに検査対象が1件も無かったことを意味します。両者はこれまで同じ`DATA_SOURCE_DEGRADED`としか表示されず、区別できませんでした。
+
+本番監視スクリプトはこの内訳を`sourceDiagnostics`として1取得元1行にまとめ、アラートのIssue本文と実行ログへ出します。判定に使う`failures`の値は変更していません。未知の取得元IDや未知のstatusは従来どおり除外します。
+
+監視スクリプトのテストが実行ファイルのパスを`URL.pathname`から組み立てており、Windowsでは`C:\C:\...`となって起動できませんでした。`fileURLToPath`へ変更し、Windowsでも実行できるようにします。
+
+BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。

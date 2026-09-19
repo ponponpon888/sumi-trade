@@ -45,11 +45,15 @@ jobs:
             const configuration = report.configurationIssues.length > 0
               ? ['', 'Configuration keys requiring attention:', ...report.configurationIssues.map((key) => '- `' + key + '`')]
               : [];
+            const diagnostics = Array.isArray(report.sourceDiagnostics) && report.sourceDiagnostics.length > 0
+              ? ['', 'Source detail:', ...report.sourceDiagnostics.map((line) => '- ' + line)]
+              : [];
             const body = [
               `Production health is **${report.status}**.`,
               '',
               details,
               ...configuration,
+              ...diagnostics,
               '',
               `Build: ${report.snapshot.buildVersion ?? 'unknown'} (expected ${report.expectedVersion})`,
               `Checked: ${report.checkedAt}`,

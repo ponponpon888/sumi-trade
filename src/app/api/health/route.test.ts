@@ -43,6 +43,7 @@ describe("health source monitoring", () => {
     expect(await response.json()).toMatchObject({
       dataSourceQualityStatus: "collecting", dataSourceIncidentStatus: "collecting",
       staleDataSources: [], degradedDataSources: [], collectingDataSources: [],
+      dataSourceQuality24h: [], dataSourceIncidents24h: [],
       mode: "paper", executionLocked: true,
     });
   });
@@ -59,6 +60,34 @@ describe("health source monitoring", () => {
     for (const state of ["stale", "degraded", "collecting"]) {
       expect(body[`${state}DataSources`]).toEqual(status === state ? [history[0].source] : []);
     }
+    expect(JSON.stringify(body)).not.toContain("private-wallet");
+  });
+
+  /**
+   * 可用率が低いのにfailureBreakdownが全てゼロなら、失敗ではなく検査対象が
+   * 無かったことを示す。この区別を外から読めることがこの項目の目的。
+   */
+  it("exposes per-source 24h detail with the failure breakdown", async () => {
+    const journal = emptyPaperJournal("disabled", "test");
+    const history = calculateDataSourceQualityHistory([]);
+    for (const item of history) item.status = "healthy";
+    history[0].status = "degraded";
+    history[0].availabilityPercent = 0;
+    history[0].averageCoveragePercent = 0;
+    history[0].currentFailureStreak = 288;
+    journal.dataSourceQualityHistory24h = history;
+    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(journal);
+    const body = await (await GET()).json();
+    expect(body.dataSourceQuality24h).toHaveLength(history.length);
+    expect(body.dataSourceQuality24h[0]).toMatchObject({
+      source: history[0].source,
+      status: "degraded",
+      availabilityPercent: 0,
+      averageCoveragePercent: 0,
+      currentFailureStreak: 288,
+      failureBreakdown: { rateLimited: 0, timeout: 0, httpError: 0, parseError: 0, other: 0 },
+    });
+    expect(Array.isArray(body.dataSourceIncidents24h)).toBe(true);
     expect(JSON.stringify(body)).not.toContain("private-wallet");
   });
 

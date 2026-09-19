@@ -36,8 +36,86 @@ async function saveReport(report) {
 }
 
 const SOURCE_IDS = new Set(["blockscout", "dexscreener", "geckoterminal", "ethereum-rpc", "kyberswap"]);
+const QUALITY_STATUSES = new Set(["healthy", "collecting", "degraded", "stale"]);
+const INCIDENT_STATUSES = new Set(["monitoring", "collecting", "recovered", "incident"]);
+const BREAKDOWN_KEYS = ["rateLimited", "timeout", "httpError", "parseError", "other"];
+
 function sourceIds(value) {
   return Array.isArray(value) ? [...new Set(value.filter((source) => SOURCE_IDS.has(source)))] : [];
+}
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isoOrNull(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+function failureBreakdown(value) {
+  const source = typeof value === "object" && value !== null ? value : {};
+  return Object.fromEntries(
+    BREAKDOWN_KEYS.map((key) => [key, finiteNumber(source[key]) ?? 0]),
+  );
+}
+
+/** Keeps only known source IDs and recognized statuses so untrusted values never reach the report. */
+function qualityDetail(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && SOURCE_IDS.has(item.source) && QUALITY_STATUSES.has(item.status))
+    .map((item) => ({
+      source: item.source,
+      status: item.status,
+      observationCount: finiteNumber(item.observationCount),
+      observationAgeSeconds: finiteNumber(item.observationAgeSeconds),
+      availabilityPercent: finiteNumber(item.availabilityPercent),
+      averageCoveragePercent: finiteNumber(item.averageCoveragePercent),
+      currentFailureStreak: finiteNumber(item.currentFailureStreak),
+      failureBreakdown: failureBreakdown(item.failureBreakdown),
+    }));
+}
+
+function incidentDetail(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && SOURCE_IDS.has(item.source) && INCIDENT_STATUSES.has(item.status))
+    .map((item) => ({
+      source: item.source,
+      status: item.status,
+      incidentCount24h: finiteNumber(item.incidentCount24h),
+      currentFailureStreak: finiteNumber(item.currentFailureStreak),
+      currentRecoveryStreak: finiteNumber(item.currentRecoveryStreak),
+      latestIncidentStartedAt: isoOrNull(item.latestIncidentStartedAt),
+      latestRecoveredAt: isoOrNull(item.latestRecoveredAt),
+    }));
+}
+
+/**
+ * One readable line per source that is not healthy. A low availability with an
+ * all-zero failure breakdown means no request-level failure was recorded, which
+ * points at empty check sets rather than a broken source.
+ */
+function sourceDiagnostics(quality, incidents) {
+  const incidentBySource = new Map(incidents.map((item) => [item.source, item]));
+  return quality
+    .filter((item) => item.status !== "healthy")
+    .map((item) => {
+      const recordedFailures = BREAKDOWN_KEYS.reduce(
+        (total, key) => total + item.failureBreakdown[key],
+        0,
+      );
+      const breakdown = recordedFailures === 0
+        ? "no request-level failures recorded (empty check sets?)"
+        : BREAKDOWN_KEYS.filter((key) => item.failureBreakdown[key] > 0)
+          .map((key) => `${key} ${item.failureBreakdown[key]}`)
+          .join(", ");
+      const incident = incidentBySource.get(item.source);
+      const incidentPart = incident && incident.status !== "monitoring"
+        ? `, incident ${incident.status}${incident.latestIncidentStartedAt ? ` since ${incident.latestIncidentStartedAt}` : ""}`
+        : "";
+      return `${item.source}: ${item.status}, availability ${item.availabilityPercent ?? "unknown"}%, coverage ${item.averageCoveragePercent ?? "unknown"}%, observations ${item.observationCount ?? "unknown"}, failure streak ${item.currentFailureStreak ?? "unknown"}, ${breakdown}${incidentPart}`;
+    });
 }
 
 function safeSnapshot(health) {
@@ -56,6 +134,8 @@ function safeSnapshot(health) {
     degradedDataSources: sourceIds(health?.degradedDataSources),
     collectingDataSources: sourceIds(health?.collectingDataSources),
     openDataSourceIncidents: sourceIds(health?.openDataSourceIncidents),
+    dataSourceQuality24h: qualityDetail(health?.dataSourceQuality24h),
+    dataSourceIncidents24h: incidentDetail(health?.dataSourceIncidents24h),
   };
 }
 
@@ -124,17 +204,23 @@ async function main() {
     failures,
     warnings,
     configurationIssues: configurationIssues(health),
+    sourceDiagnostics: sourceDiagnostics(
+      snapshot.dataSourceQuality24h,
+      snapshot.dataSourceIncidents24h,
+    ),
     snapshot,
   };
   await saveReport(report);
 
   if (failures.length > 0) {
     console.error("Production health blocked", { ...snapshot, failures });
+    for (const line of report.sourceDiagnostics) console.error(`  ${line}`);
     process.exitCode = 1;
     return;
   }
 
   console.log("Production health passed", { ...snapshot, warnings });
+  for (const line of report.sourceDiagnostics) console.log(`  ${line}`);
 }
 
 try {
@@ -150,6 +236,7 @@ try {
     failures: ["HEALTH_CHECK_UNAVAILABLE"],
     warnings: [],
     configurationIssues: [],
+    sourceDiagnostics: [],
     error: message,
     snapshot: safeSnapshot(null),
   });

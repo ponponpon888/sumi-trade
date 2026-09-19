@@ -25,16 +25,15 @@ export async function GET() {
         cadenceMinutes: 5,
       })
     : "error";
-  const openDataSourceIncidents = journal?.dataSourceIncidents24h
+  const sourceIncidents = journal?.dataSourceIncidents24h ?? [];
+  const openDataSourceIncidents = sourceIncidents
     .filter((incident) => incident.status === "incident")
-    .map((incident) => incident.source) ?? [];
+    .map((incident) => incident.source);
   const dataSourceIncidentStatus = openDataSourceIncidents.length > 0
     ? "incident"
-    : journal?.dataSourceIncidents24h.some(
-        (incident) => incident.status === "recovered",
-      )
+    : sourceIncidents.some((incident) => incident.status === "recovered")
       ? "recovered"
-      : journal?.dataSourceIncidents24h.length && journal.dataSourceIncidents24h.every(
+      : sourceIncidents.length && sourceIncidents.every(
           (incident) => incident.status === "monitoring",
         )
         ? "monitoring"
@@ -51,6 +50,31 @@ export async function GET() {
       : sourceHistory.length === 0 || collectingDataSources.length > 0
         ? "collecting"
         : "healthy";
+
+  /**
+   * 取得元ごとの内訳。どのソースがどう失敗しているかを秘密情報なしで外から読めるようにする。
+   * failureBreakdownは実際にリクエストを投げて失敗した回数だけを数えるため、
+   * 可用率が低いのに内訳が全てゼロなら、失敗ではなく検査対象が無かったことを意味する。
+   */
+  const dataSourceQuality24h = sourceHistory.map((item) => ({
+    source: item.source,
+    status: item.status,
+    observationCount: item.observationCount,
+    observationAgeSeconds: item.observationAgeSeconds,
+    availabilityPercent: item.availabilityPercent,
+    averageCoveragePercent: item.averageCoveragePercent,
+    currentFailureStreak: item.currentFailureStreak,
+    failureBreakdown: item.failureBreakdown,
+  }));
+  const dataSourceIncidents24h = sourceIncidents.map((item) => ({
+    source: item.source,
+    status: item.status,
+    incidentCount24h: item.incidentCount24h,
+    currentFailureStreak: item.currentFailureStreak,
+    currentRecoveryStreak: item.currentRecoveryStreak,
+    latestIncidentStartedAt: item.latestIncidentStartedAt,
+    latestRecoveredAt: item.latestRecoveredAt,
+  }));
 
   return Response.json(
     {
@@ -77,6 +101,8 @@ export async function GET() {
       staleDataSources,
       degradedDataSources,
       collectingDataSources,
+      dataSourceQuality24h,
+      dataSourceIncidents24h,
       checkedAt: new Date(nowMs).toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } },

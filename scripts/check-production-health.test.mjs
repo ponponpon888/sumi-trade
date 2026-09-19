@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).version;
 const valid = {
@@ -11,6 +12,12 @@ const valid = {
   configurationStatus: "pass", safetyStatus: "monitoring",
   staleDataSources: [], degradedDataSources: [], collectingDataSources: [], openDataSourceIncidents: [],
   paperEngineStatus: "live", dataSourceQualityStatus: "healthy", dataSourceIncidentStatus: "monitoring",
+};
+const emptyCheckSets = {
+  source: "kyberswap", status: "degraded", observationCount: 288,
+  observationAgeSeconds: 12, availabilityPercent: 0, averageCoveragePercent: 0,
+  currentFailureStreak: 288,
+  failureBreakdown: { rateLimited: 0, timeout: 0, httpError: 0, parseError: 0, other: 0 },
 };
 const preload = `
 const fixture = JSON.parse(process.env.SUMI_HEALTH_TEST_FIXTURE);
@@ -44,6 +51,17 @@ const cases = [
   ["null source list", { degradedDataSources: null }, 1],
   ["wrong source list type", { openDataSourceIncidents: "secret-value" }, 1],
   ["unknown source ID", { collectingDataSources: ["secret-value"] }, 1],
+  ["reports empty check sets distinctly", { dataSourceQuality24h: [emptyCheckSets] }, 0],
+  ["reports recorded failure kinds", { dataSourceQuality24h: [{ ...emptyCheckSets, failureBreakdown: { ...emptyCheckSets.failureBreakdown, rateLimited: 7 } }] }, 0],
+  ["keeps incident detail alongside quality detail", {
+    dataSourceQuality24h: [emptyCheckSets],
+    dataSourceIncidents24h: [{ source: "kyberswap", status: "incident", incidentCount24h: 1, currentFailureStreak: 288, currentRecoveryStreak: 0, latestIncidentStartedAt: "2026-09-17T05:00:00.000Z", latestRecoveredAt: null }],
+  }, 0],
+  ["filters unknown detail sources", {
+    dataSourceQuality24h: [{ ...emptyCheckSets, source: "secret-value" }],
+    dataSourceIncidents24h: [{ source: "secret-value", status: "incident", incidentCount24h: 1, currentFailureStreak: 3, currentRecoveryStreak: 0, latestIncidentStartedAt: "secret-value", latestRecoveredAt: null }],
+  }, 0],
+  ["filters unknown detail statuses", { dataSourceQuality24h: [{ ...emptyCheckSets, status: "secret-value" }] }, 0],
   ["intentional safety stop", { safetyStatus: "stopped" }, 0],
   ["blocked configuration with empty details", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: [] } }, 1, 200, []],
   ["reports only known configuration keys", { configurationStatus: "blocked", runtimeConfiguration: { missingOrInvalid: ["WALLET_ADDRESS", "SAFETY_CONTROL_SECRET", "UNTRUSTED_VALUE", "WALLET_ADDRESS"] } }, 1, 200, ["WALLET_ADDRESS", "SAFETY_CONTROL_SECRET"]],
@@ -64,7 +82,7 @@ for (const [name, patch, expected, httpStatus = 200, expectedConfigurationIssues
     const reportPath = join(reportDirectory, "report.json");
     const result = spawnSync(process.execPath, [
       "--import", "data:text/javascript," + encodeURIComponent(preload),
-      new URL("./check-production-health.mjs", import.meta.url).pathname,
+      fileURLToPath(new URL("./check-production-health.mjs", import.meta.url)),
     ], {
       encoding: "utf8", timeout: 5000,
       env: {
@@ -99,6 +117,28 @@ for (const [name, patch, expected, httpStatus = 200, expectedConfigurationIssues
           assert.ok(report.failures.includes("DATA_SOURCE_LIST_INVALID"));
         }
         if (patch?.staleDataSources) assert.deepEqual(report.snapshot.staleDataSources, ["ethereum-rpc"]);
+        // 取得元の内訳は失敗判定を変えず、診断だけを増やす
+        assert.ok(Array.isArray(report.snapshot.dataSourceQuality24h));
+        assert.ok(Array.isArray(report.snapshot.dataSourceIncidents24h));
+        if (name === "reports empty check sets distinctly") {
+          assert.equal(report.snapshot.dataSourceQuality24h.length, 1);
+          assert.ok(report.sourceDiagnostics.some((line) =>
+            line.startsWith("kyberswap: degraded") && line.includes("no request-level failures recorded")));
+        }
+        if (name === "reports recorded failure kinds") {
+          assert.ok(report.sourceDiagnostics.some((line) => line.includes("rateLimited 7")));
+          assert.ok(!report.sourceDiagnostics.some((line) => line.includes("no request-level failures recorded")));
+        }
+        if (name === "keeps incident detail alongside quality detail") {
+          assert.equal(report.snapshot.dataSourceIncidents24h.length, 1);
+          assert.ok(report.sourceDiagnostics.some((line) =>
+            line.includes("incident incident since 2026-09-17T05:00:00.000Z")));
+        }
+        if (name.startsWith("filters unknown detail")) {
+          assert.deepEqual(report.snapshot.dataSourceQuality24h, []);
+          assert.deepEqual(report.snapshot.dataSourceIncidents24h, []);
+          assert.deepEqual(report.sourceDiagnostics, []);
+        }
       }
     } finally {
       rmSync(reportDirectory, { recursive: true, force: true });
