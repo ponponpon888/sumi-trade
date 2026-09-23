@@ -13,6 +13,7 @@ import type {
   ModelDriftAssessment,
   ModelDriftSnapshot,
   PaperConfidenceCalibration,
+  PaperConfidenceReliability,
   PaperJournalSnapshot,
   PaperModelPerformance,
   PortfolioAsset,
@@ -833,12 +834,21 @@ const confidenceBandLabels = {
   high: "70–100",
 } as const;
 
+const reliabilityStatusLabels = {
+  collecting: "COLLECTING",
+  informative: "INFORMATIVE",
+  inverted: "INVERTED",
+  uninformative: "NO EDGE",
+} as const;
+
 function ConfidenceCalibrationCard({
   label,
   calibration,
+  reliability,
 }: {
   label: string;
   calibration: PaperConfidenceCalibration;
+  reliability: PaperConfidenceReliability;
 }) {
   return (
     <article className={`calibration-card calibration-${calibration.status}`}>
@@ -856,6 +866,28 @@ function ConfidenceCalibrationCard({
         ))}
       </div>
       <p>{calibration.reasons[0]}</p>
+      <div className="calibration-head">
+        <div>
+          <span>WIN PROBABILITY</span>
+          <small>
+            WALK-FORWARD · {reliability.testCount} OOS · {reliability.independentSampleCount} SCANS
+            {reliability.brierSkillScore === null ? "" : ` · BSS ${reliability.brierSkillScore.toFixed(3)}`}
+          </small>
+        </div>
+        <strong>{reliabilityStatusLabels[reliability.status]}</strong>
+      </div>
+      {reliability.calibratedWinRates.length ? (
+        <div className="calibration-bands calibration-probabilities">
+          {reliability.calibratedWinRates.map((point) => (
+            <div key={point.confidence}>
+              <span>CONF {point.confidence}</span>
+              <strong>{point.winProbabilityPercent.toFixed(0)}%</strong>
+              <small>fitted</small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <p>{reliability.reasons[0]}</p>
       <small className="calibration-note">RESEARCH ONLY · BUYゲートへ自動接続しません</small>
     </article>
   );
@@ -872,10 +904,12 @@ function ConfidenceCalibrationBoard({ journal }: { journal: PaperJournalSnapshot
         <ConfidenceCalibrationCard
           label="CORE CHART"
           calibration={journal.confidenceCalibrationByModel.chart}
+          reliability={journal.confidenceReliabilityByModel.chart}
         />
         <ConfidenceCalibrationCard
           label="COMMUNITY TREND"
           calibration={journal.confidenceCalibrationByModel["community-trend"]}
+          reliability={journal.confidenceReliabilityByModel["community-trend"]}
         />
       </div>
     </section>
@@ -932,6 +966,248 @@ function RegimePerformanceBoard({ journal }: { journal: PaperJournalSnapshot }) 
       <p>
         10件以上で、30日損益がマイナスかつ平均リターン≤-1%またはPF&lt;0.80なら警告します。
         分析表示のみで、既存の戦略切替・BUY／SELL判定を自動変更しません。
+      </p>
+    </section>
+  );
+}
+
+const scoringStatusLabels = {
+  collecting: "COLLECTING",
+  "barrier-better": "EXIT RULES BETTER",
+  "barrier-worse": "EXIT RULES WORSE",
+  similar: "NO CLEAR GAP",
+} as const;
+
+const scoringStatusClasses = {
+  collecting: "collecting",
+  "barrier-better": "monitoring",
+  "barrier-worse": "alert",
+  similar: "monitoring",
+} as const;
+
+function formatInterval(low: number | null, high: number | null): string {
+  return low === null || high === null
+    ? "—"
+    : `${signedPercent(low)} … ${signedPercent(high)}`;
+}
+
+function ScoringComparisonBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const comparison = journal.scoringComparison;
+  const statusClass = `regime-performance-${scoringStatusClasses[comparison.status]}`;
+  const summaries = [
+    { key: "fixed", label: "6H FIXED", summary: comparison.fixedHorizon },
+    { key: "barrier", label: "EXIT RULES", summary: comparison.barrier },
+  ] as const;
+
+  return (
+    <section
+      className={`regime-performance-board${comparison.status === "barrier-worse" ? " regime-performance-has-alert" : ""}`}
+      aria-label="損切り・利確ルールによる採点と保有時間別の成績"
+    >
+      <div className="regime-performance-heading">
+        <div><span>EXIT-RULE SCORING</span><strong>実際の出口で採点すると、どう変わるか。</strong></div>
+        <small>30D · CORE CHART · RESEARCH ONLY</small>
+      </div>
+      <div className="regime-performance-grid">
+        {summaries.map(({ key, label, summary }) => (
+          <article className={statusClass} key={key}>
+            <div>
+              <span>{label}</span>
+              <small>{comparison.pairedCount}/{comparison.minimumSamples} PAIRED</small>
+            </div>
+            <b>{key === "barrier" ? scoringStatusLabels[comparison.status] : "PROMOTION BASIS"}</b>
+            <strong className={summary.netPnlUsd < 0 ? "negative" : summary.netPnlUsd > 0 ? "positive" : ""}>
+              {comparison.pairedCount ? signedPercent(summary.averageNetReturnPercent) : "—"}
+            </strong>
+            <small>WR {comparison.pairedCount ? `${summary.winRate.toFixed(0)}%` : "—"} · PF {summary.profitFactor === null ? "—" : summary.profitFactor.toFixed(2)}</small>
+            {key === "barrier" ? (
+              <small>
+                TP {comparison.exitMix["take-profit"]} · SL {comparison.exitMix["stop-loss"]} · TRAIL {comparison.exitMix["trailing-stop"]} · 6H {comparison.exitMix.horizon}
+              </small>
+            ) : (
+              <small>{comparison.sparsePathCount} SPARSE PATHS EXCLUDED</small>
+            )}
+          </article>
+        ))}
+        <article className={statusClass}>
+          <div>
+            <span>DIFFERENCE</span>
+            <small>{comparison.independentSampleCount}/{comparison.minimumIndependentSamples} SCANS</small>
+          </div>
+          <b>EXIT RULES − 6H</b>
+          <strong>
+            {comparison.pairedCount
+              ? signedPercent(comparison.barrier.averageNetReturnPercent - comparison.fixedHorizon.averageNetReturnPercent)
+              : "—"}
+          </strong>
+          <small>95% CI {formatInterval(comparison.differenceLowPercent, comparison.differenceHighPercent)}</small>
+          <small>{comparison.reasons[0]}</small>
+        </article>
+        {comparison.horizons.map((horizon) => (
+          <article className="regime-performance-monitoring" key={horizon.horizon}>
+            <div>
+              <span>HOLD {horizon.hours}H</span>
+              <small>{horizon.maturedCount} SETTLED · {horizon.independentSampleCount} SCANS</small>
+            </div>
+            <b>NET RETURN</b>
+            <strong className={(horizon.averageNetReturnPercent ?? 0) < 0 ? "negative" : (horizon.averageNetReturnPercent ?? 0) > 0 ? "positive" : ""}>
+              {horizon.averageNetReturnPercent === null ? "—" : signedPercent(horizon.averageNetReturnPercent)}
+            </strong>
+            <small>95% CI {formatInterval(horizon.confidenceLowPercent, horizon.confidenceHighPercent)}</small>
+          </article>
+        ))}
+      </div>
+      <p>
+        同じシグナルを、6時間後の価格（昇格判定に使用）と、シグナル時点の損切り・トレーリングストップ・利確ルールの両方で採点します。
+        5分ごとの価格しか無いため、損切りは観測価格、利確は目標価格で約定したとみなす保守的な計算です。
+        分析表示のみで、昇格条件・売買判定を自動変更しません。
+      </p>
+    </section>
+  );
+}
+
+const orderFlowFeatureLabels = {
+  "buy-share-h1": "BUY SHARE 1H",
+  "buy-share-h6": "BUY SHARE 6H",
+  "volume-acceleration-h1": "VOLUME PACE 1H",
+} as const;
+
+const orderFlowStatusLabels = {
+  collecting: "COLLECTING",
+  "supports-signal": "HELPS",
+  "contradicts-signal": "HURTS",
+  "no-edge": "NO EDGE",
+} as const;
+
+const orderFlowStatusClasses = {
+  collecting: "collecting",
+  "supports-signal": "monitoring",
+  "contradicts-signal": "alert",
+  "no-edge": "monitoring",
+} as const;
+
+function OrderFlowAttributionBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const attribution = journal.orderFlowAttribution;
+  return (
+    <section className="regime-performance-board" aria-label="シグナル時点の売買フローと成績の関係">
+      <div className="regime-performance-heading">
+        <div><span>ORDER FLOW ATTRIBUTION</span><strong>買いの勢いは、シグナルの当たりを分けるか。</strong></div>
+        <small>{attribution.evidencedCount} SIGNALS · 30D · RESEARCH ONLY</small>
+      </div>
+      <div className="regime-performance-grid">
+        {attribution.rows.map((row) => (
+          <article
+            className={`regime-performance-${orderFlowStatusClasses[row.status]}`}
+            key={`${row.feature}-${row.horizon}`}
+          >
+            <div>
+              <span>{orderFlowFeatureLabels[row.feature]} → {row.horizon === "h1" ? "1H" : "6H"}</span>
+              <small>{row.favorableCount} / {row.unfavorableCount} · MIN {attribution.minimumSamplesPerGroup} EACH</small>
+            </div>
+            <b>{orderFlowStatusLabels[row.status]}</b>
+            <strong>
+              {row.favorableAverageNetReturnPercent === null || row.unfavorableAverageNetReturnPercent === null
+                ? "—"
+                : signedPercent(row.favorableAverageNetReturnPercent - row.unfavorableAverageNetReturnPercent)}
+            </strong>
+            <small>CI {formatInterval(row.differenceLowPercent, row.differenceHighPercent)}</small>
+            <small>
+              {row.feature === "volume-acceleration-h1" ? "BUSY " : "WITH "}
+              {row.favorableAverageNetReturnPercent === null ? "—" : signedPercent(row.favorableAverageNetReturnPercent)}
+              {row.feature === "volume-acceleration-h1" ? " · QUIET " : " · AGAINST "}
+              {row.unfavorableAverageNetReturnPercent === null ? "—" : signedPercent(row.unfavorableAverageNetReturnPercent)}
+            </small>
+          </article>
+        ))}
+      </div>
+      <p>
+        売買シグナルの時点で、DEXの買い取引比率が55%以上（SELLは売り55%以上）の場合と45%以下の場合、
+        直近1時間の出来高が24時間平均の1.5倍以上と0.75倍以下の場合で、その後のコスト控除後リターンを比べます。
+        6つの比較をまとめて誤検出5%に抑えるため、各区間は{(attribution.familyConfidence * 100).toFixed(2)}%で計算します。
+        チャートモデルはこの値を使っていません。
+      </p>
+    </section>
+  );
+}
+
+const buyGateLabels = {
+  passed: "PASSED",
+  "not-tradable": "NOT TRADABLE",
+  "contract-safety": "CONTRACT",
+  "quote-preflight": "QUOTE",
+  "onchain-preflight": "ONCHAIN",
+  robustness: "ROBUSTNESS",
+  "cost-gate": "COST GATE",
+  "model-drift": "MODEL DRIFT",
+  "portfolio-risk": "PORTFOLIO RISK",
+  budget: "BUDGET",
+  "not-in-plan": "NOT IN PLAN",
+  unknown: "LEGACY",
+} as const;
+
+const buyGateStatusLabels = {
+  baseline: "BASELINE",
+  collecting: "COLLECTING",
+  protective: "PROTECTIVE",
+  "missed-profit": "MISSED PROFIT",
+  inconclusive: "INCONCLUSIVE",
+} as const;
+
+const buyGateStatusClasses = {
+  baseline: "monitoring",
+  collecting: "collecting",
+  protective: "monitoring",
+  "missed-profit": "alert",
+  inconclusive: "monitoring",
+} as const;
+
+function BuyGatePerformanceBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const missedCount = journal.buyGatePerformance.filter(
+    (performance) => performance.status === "missed-profit",
+  ).length;
+
+  return (
+    <section
+      className={`regime-performance-board${missedCount ? " regime-performance-has-alert" : ""}`}
+      aria-label="見送ったBUYの6時間後成績"
+    >
+      <div className="regime-performance-heading">
+        <div><span>BUY GATE COUNTERFACTUAL</span><strong>止めたBUYは、正しかったか。</strong></div>
+        <small>{missedCount ? `${missedCount} MISSED PROFIT` : "30D · CORE CHART · RESEARCH ONLY"}</small>
+      </div>
+      <div className="regime-performance-grid">
+        {journal.buyGatePerformance.map((performance) => (
+          <article
+            className={`regime-performance-${buyGateStatusClasses[performance.status]}`}
+            key={performance.gate}
+          >
+            <div>
+              <span>{buyGateLabels[performance.gate]}</span>
+              <small>
+                {performance.gate === "passed"
+                  ? `${performance.maturedCount} SETTLED`
+                  : `SOLE ${performance.maturedCount}/${performance.minimumSamples} · ALL ${performance.blockedCount}`}
+              </small>
+            </div>
+            <b>{buyGateStatusLabels[performance.status]}</b>
+            <strong className={performance.netPnlUsd < 0 ? "negative" : performance.netPnlUsd > 0 ? "positive" : ""}>
+              {performance.maturedCount ? signedPercent(performance.averageNetReturnPercent) : "—"}
+            </strong>
+            <small>
+              95% CI {performance.confidenceLowPercent === null || performance.confidenceHighPercent === null
+                ? "—"
+                : `${signedPercent(performance.confidenceLowPercent)} … ${signedPercent(performance.confidenceHighPercent)}`}
+              {" "}· {performance.independentSampleCount} SCANS
+            </small>
+            <small>WR {performance.maturedCount ? `${performance.winRate.toFixed(0)}%` : "—"} · PF {performance.profitFactor === null ? "—" : performance.profitFactor.toFixed(2)}</small>
+            <small>{performance.reasons[0]}</small>
+          </article>
+        ))}
+      </div>
+      <p>
+        見送ったBUYも、買っていた場合の6時間後コスト控除後リターンで採点します。
+        各判定は「その判定だけが止めたBUY」で評価し、同じスキャンのBUYは1標本として95%区間を計算します。
+        単独10件・5スキャン以上で、区間全体が0の片側にある場合だけ結論を出します。分析表示のみで、判定条件を自動変更しません。
       </p>
     </section>
   );
@@ -1209,6 +1485,9 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
       <ConfidenceCalibrationBoard journal={journal} />
 
       <RegimePerformanceBoard journal={journal} />
+      <BuyGatePerformanceBoard journal={journal} />
+      <ScoringComparisonBoard journal={journal} />
+      <OrderFlowAttributionBoard journal={journal} />
 
       <PerformanceLens journal={journal} />
 

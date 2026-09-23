@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { compareStrategies } from "@/lib/chart-model";
 import {
+  calculateBuyGatePerformance,
+  calculateOrderFlowAttribution,
+  calculateScoringComparison,
   calculateOperationalReadiness,
   calculateSourceQualityImpact,
   calculateSourceReasonImpact,
@@ -9,6 +12,7 @@ import {
   createPaperScanRecord,
   evaluatePaperJournal,
   MINIMUM_OBSERVATION_HOURS,
+  orderFlowFeatures,
 } from "@/lib/paper-journal-core";
 import type {
   ChartAnalysis,
@@ -777,5 +781,377 @@ describe("paper operational readiness", () => {
     expect(readiness.latestScanFresh).toBe(false);
     expect(readiness.status).toBe("blocked");
     expect(readiness.overallPassed).toBe(false);
+  });
+});
+
+describe("buy gate counterfactuals", () => {
+  function gatedData(price: number, buyGate: StrategyPlan["signals"][number]["buyGate"]) {
+    const input = data(price, "BUY");
+    input.plan.signals[0] = {
+      ...input.plan.signals[0],
+      action: buyGate === "passed" ? "BUY" : "HOLD",
+      estimatedUsd: buyGate === "passed" ? 200 : 0,
+      buyGate,
+    };
+    return input;
+  }
+
+  function gateOutcome(
+    index: number,
+    netReturnPercent: number,
+    overrides: Partial<PaperTradeOutcome> = {},
+  ): PaperTradeOutcome {
+    return {
+      ...qualityOutcome(index, netReturnPercent, false),
+      decisionId: `gate-${index}`,
+      buyGate: "cost-gate",
+      ...overrides,
+    };
+  }
+
+  it("records which gate stopped a chart BUY", () => {
+    const now = Date.UTC(2026, 8, 7, 0, 1);
+    expect(createPaperScanRecord(gatedData(100, "portfolio-risk"), now).signals[0])
+      .toMatchObject({ direction: "BUY", buyGate: "portfolio-risk", notionalUsd: 200 });
+    const multi = gatedData(100, "contract-safety");
+    multi.plan.signals[0].buyGateFailures = ["contract-safety", "portfolio-risk"];
+    expect(createPaperScanRecord(multi, now).signals[0].buyGateFailures)
+      .toEqual(["contract-safety", "portfolio-risk"]);
+    expect(createPaperScanRecord(gatedData(100, "passed"), now).signals[0].buyGate)
+      .toBe("passed");
+    expect(createPaperScanRecord(gatedData(100, undefined), now).signals[0].buyGate)
+      .toBe("not-in-plan");
+    expect(createPaperScanRecord(data(100, "SELL"), now).signals[0].buyGate)
+      .toBeUndefined();
+  });
+
+  it("scores blocked BUYs alongside the existing journal metrics", () => {
+    const entry = createPaperScanRecord(gatedData(100, "cost-gate"), Date.UTC(2026, 8, 7, 0));
+    const exit = { ...createPaperScanRecord(gatedData(90, "cost-gate"), Date.UTC(2026, 8, 7, 6)), signals: [] };
+    const result = evaluatePaperJournal([entry, exit], Date.UTC(2026, 8, 7, 7));
+
+    expect(result.maturedCount).toBe(1);
+    expect(result.buyGatePerformance.find((row) => row.gate === "cost-gate"))
+      .toMatchObject({ maturedCount: 1, status: "collecting", netPnlUsd: -22 });
+    expect(result.buyGatePerformance.find((row) => row.gate === "passed"))
+      .toMatchObject({ maturedCount: 0, status: "baseline" });
+  });
+
+  it("keeps a baseline row and only lists gates that have outcomes", () => {
+    expect(calculateBuyGatePerformance([]).map((row) => row.gate)).toEqual(["passed"]);
+  });
+
+  it("waits for ten outcomes before judging a gate", () => {
+    const outcomes = Array.from({ length: 9 }, (_, index) => gateOutcome(index, -3));
+    expect(calculateBuyGatePerformance(outcomes)[1]).toMatchObject({
+      gate: "cost-gate",
+      maturedCount: 9,
+      status: "collecting",
+      researchOnly: true,
+    });
+  });
+
+  it("marks a gate protective when its blocked BUYs would have lost money", () => {
+    const outcomes = Array.from({ length: 10 }, (_, index) => gateOutcome(index, -2));
+    expect(calculateBuyGatePerformance(outcomes)[1]).toMatchObject({
+      gate: "cost-gate",
+      status: "protective",
+      netPnlUsd: -20,
+    });
+  });
+
+  it("marks a gate as missing profit when its blocked BUYs would have won", () => {
+    const outcomes = Array.from({ length: 10 }, (_, index) =>
+      gateOutcome(index, 2, { buyGate: "portfolio-risk" }));
+    expect(calculateBuyGatePerformance(outcomes)[1]).toMatchObject({
+      gate: "portfolio-risk",
+      status: "missed-profit",
+    });
+  });
+
+  it("stays inconclusive when the interval still contains zero", () => {
+    const outcomes = Array.from({ length: 10 }, (_, index) =>
+      gateOutcome(index, index % 2 ? 0.2 : -0.1));
+    expect(calculateBuyGatePerformance(outcomes)[1]).toMatchObject({
+      status: "inconclusive",
+      independentSampleCount: 10,
+    });
+  });
+
+  it("does not call a noisy gate with a loss-making average protective", () => {
+    // Average -0.8% would have passed a plain average threshold; the interval does not.
+    const returns = [-6, 5, -4, 3, -7, 4, -2, 6, -5, -2];
+    const row = calculateBuyGatePerformance(
+      returns.map((value, index) => gateOutcome(index, value)),
+    )[1];
+    expect(row.averageNetReturnPercent).toBe(-0.8);
+    expect(row.status).toBe("inconclusive");
+    expect(row.confidenceLowPercent!).toBeLessThan(0);
+    expect(row.confidenceHighPercent!).toBeGreaterThan(0);
+  });
+
+  it("treats BUYs from the same scan as one sample", () => {
+    const outcomes = Array.from({ length: 12 }, (_, index) =>
+      gateOutcome(index, -2, { signalTime: new Date(Date.UTC(2026, 8, 7, index % 3)).toISOString() }));
+    expect(calculateBuyGatePerformance(outcomes)[1]).toMatchObject({
+      maturedCount: 12,
+      independentSampleCount: 3,
+      status: "collecting",
+    });
+  });
+
+  it("judges a gate only on the BUYs it blocked alone", () => {
+    const sole = Array.from({ length: 10 }, (_, index) =>
+      gateOutcome(index, -2, { buyGateFailures: ["cost-gate"] }));
+    const shared = Array.from({ length: 5 }, (_, index) =>
+      gateOutcome(20 + index, 5, {
+        buyGate: "cost-gate",
+        buyGateFailures: ["cost-gate", "portfolio-risk"],
+      }));
+    const rows = calculateBuyGatePerformance([...sole, ...shared]);
+    expect(rows.find((row) => row.gate === "cost-gate")).toMatchObject({
+      blockedCount: 15,
+      maturedCount: 10,
+      status: "protective",
+      confidenceLowPercent: -2,
+      confidenceHighPercent: -2,
+    });
+    expect(rows.find((row) => row.gate === "portfolio-risk")).toMatchObject({
+      blockedCount: 5,
+      maturedCount: 0,
+      status: "collecting",
+    });
+  });
+
+  it("uses the recorded gate alone when all filters passed but the budget stopped the BUY", () => {
+    const rows = calculateBuyGatePerformance([
+      gateOutcome(0, 1, { buyGate: "budget", buyGateFailures: [] }),
+    ]);
+    expect(rows.map((row) => [row.gate, row.maturedCount])).toEqual([
+      ["passed", 0],
+      ["budget", 1],
+    ]);
+  });
+
+  it("ignores SELL and community-trend outcomes and buckets legacy BUYs as unknown", () => {
+    const rows = calculateBuyGatePerformance([
+      gateOutcome(0, 1, { direction: "SELL", buyGate: undefined }),
+      gateOutcome(1, 1, { model: "community-trend", buyGate: undefined }),
+      gateOutcome(2, 1, { buyGate: undefined }),
+      gateOutcome(3, 1, { buyGate: "passed" }),
+    ]);
+    expect(rows.map((row) => [row.gate, row.maturedCount])).toEqual([
+      ["passed", 1],
+      ["unknown", 1],
+    ]);
+  });
+});
+
+describe("exit-rule scoring", () => {
+  const FIVE_MINUTES_MS = 5 * 60 * 1_000;
+  const start = Date.UTC(2026, 8, 7, 0);
+
+  function pathRecords(priceAt: (minute: number) => number): PaperScanRecord[] {
+    return Array.from({ length: 73 }, (_, step) => {
+      const record = createPaperScanRecord(
+        data(priceAt(step * 5), "BUY"),
+        start + step * FIVE_MINUTES_MS,
+      );
+      return step === 0 ? record : { ...record, signals: [] };
+    });
+  }
+
+  it("scores a BUY by its own take-profit alongside the six-hour result", () => {
+    const records = pathRecords((minute) =>
+      minute === 0 ? 100 : minute < 30 ? 104 : minute === 30 ? 109 : 100);
+    const [outcome] = collectPaperTradeOutcomes(records, start + 7 * 60 * 60 * 1_000);
+
+    expect(records[0].signals[0]).toMatchObject({
+      stopLossPercent: 4,
+      takeProfitPercent: 8,
+      trailingStopPercent: 3,
+    });
+    // Six-hour score: flat price, minus 1% round-trip cost.
+    expect(outcome).toMatchObject({ netReturnPercent: -1, netPnlUsd: -2, won: false });
+    expect(outcome.barrier).toMatchObject({
+      exit: "take-profit",
+      exitPriceUsd: 108,
+      netReturnPercent: 7,
+      netPnlUsd: 14,
+      won: true,
+      pricePointCount: 71,
+    });
+    expect(outcome.horizonNetReturnsPercent).toEqual({ h1: -1, h2: -1, h4: -1, h6: -1 });
+  });
+
+  it("leaves short horizons empty when no scan is close enough", () => {
+    const records = pathRecords(() => 100).filter(
+      (record) => record.bucketTimeMs < start + 50 * 60 * 1_000 ||
+        record.bucketTimeMs > start + 80 * 60 * 1_000,
+    );
+    const [outcome] = collectPaperTradeOutcomes(records, start + 7 * 60 * 60 * 1_000);
+    expect(outcome.horizonNetReturnsPercent?.h1).toBeNull();
+    expect(outcome.horizonNetReturnsPercent?.h2).toBe(-1);
+  });
+
+  function scored(
+    index: number,
+    fixed: number,
+    barrierReturn: number,
+    overrides: Partial<PaperTradeOutcome> = {},
+  ): PaperTradeOutcome {
+    return {
+      ...qualityOutcome(index, fixed, false),
+      decisionId: `scoring-${index}`,
+      barrier: {
+        exit: barrierReturn > fixed ? "take-profit" : "stop-loss",
+        exitTime: new Date(Date.UTC(2026, 8, 7, index, 30)).toISOString(),
+        exitPriceUsd: 100 + barrierReturn,
+        grossReturnPercent: barrierReturn + 1,
+        netReturnPercent: barrierReturn,
+        netPnlUsd: barrierReturn,
+        won: barrierReturn > 0,
+        pricePointCount: 70,
+      },
+      horizonNetReturnsPercent: { h1: 0.5, h2: null, h4: fixed, h6: fixed },
+      ...overrides,
+    };
+  }
+
+  it("collects until twenty signals have dense price paths", () => {
+    const result = calculateScoringComparison([
+      ...Array.from({ length: 19 }, (_, index) => scored(index, -1, 2)),
+      scored(19, -1, 2, {
+        barrier: { ...scored(19, -1, 2).barrier!, pricePointCount: 10 },
+      }),
+    ]);
+    expect(result).toMatchObject({
+      status: "collecting",
+      pairedCount: 19,
+      sparsePathCount: 1,
+    });
+  });
+
+  it("reports exit rules better when every signal improves", () => {
+    const result = calculateScoringComparison(
+      Array.from({ length: 20 }, (_, index) => scored(index, -1, 2)),
+    );
+    expect(result).toMatchObject({
+      status: "barrier-better",
+      differenceLowPercent: 3,
+      differenceHighPercent: 3,
+      exitMix: { "take-profit": 20, "stop-loss": 0, "trailing-stop": 0, horizon: 0 },
+      fixedHorizon: { winRate: 0, averageNetReturnPercent: -1 },
+      barrier: { winRate: 100, averageNetReturnPercent: 2 },
+      researchOnly: true,
+    });
+  });
+
+  it("reports exit rules worse and stays similar when the gap is noise", () => {
+    expect(calculateScoringComparison(
+      Array.from({ length: 20 }, (_, index) => scored(index, 1, -2)),
+    ).status).toBe("barrier-worse");
+    expect(calculateScoringComparison(
+      Array.from({ length: 20 }, (_, index) =>
+        scored(index, 0, index % 2 ? 1 : -1)),
+    ).status).toBe("similar");
+  });
+
+  it("summarizes each holding time with the samples that reached it", () => {
+    const result = calculateScoringComparison(
+      Array.from({ length: 20 }, (_, index) => scored(index, -1, 2)),
+    );
+    expect(result.horizons.map((row) => [row.horizon, row.maturedCount, row.averageNetReturnPercent]))
+      .toEqual([
+        ["h1", 20, 0.5],
+        ["h2", 0, null],
+        ["h4", 20, -1],
+        ["h6", 20, -1],
+      ]);
+  });
+});
+
+describe("order flow attribution", () => {
+  const flowAsset = {
+    symbol: "TEST",
+    volume24hUsd: 48_000,
+    orderFlow: { buysH1: 30, sellsH1: 10, buysH6: 9, sellsH6: 5, volumeH1Usd: 4_000 },
+  } as PortfolioSnapshot["assets"][number];
+
+  it("derives buy share and volume acceleration from the asset's DEX activity", () => {
+    expect(orderFlowFeatures(flowAsset)).toEqual({
+      buyShareH1: 0.75,
+      // Only 14 transactions in six hours: too few to trust a share.
+      buyShareH6: null,
+      volumeAccelerationH1: 2,
+    });
+    expect(orderFlowFeatures({ ...flowAsset, orderFlow: null })).toBeUndefined();
+  });
+
+  it("attaches the order flow to the chart signal it was observed with", () => {
+    const input = data(100, "BUY");
+    input.snapshot.assets = [flowAsset];
+    const record = createPaperScanRecord(input, Date.UTC(2026, 8, 7));
+    expect(record.signals[0].orderFlow).toMatchObject({ buyShareH1: 0.75 });
+    expect(createPaperScanRecord(data(100, "BUY"), Date.UTC(2026, 8, 7)).signals[0].orderFlow)
+      .toBeUndefined();
+  });
+
+  function flowOutcome(
+    index: number,
+    direction: "BUY" | "SELL",
+    buyShareH1: number,
+    netReturnPercent: number,
+  ): PaperTradeOutcome {
+    return {
+      ...qualityOutcome(index, netReturnPercent, false),
+      decisionId: `flow-${index}`,
+      direction,
+      orderFlow: { buyShareH1, buyShareH6: null, volumeAccelerationH1: 1 },
+      horizonNetReturnsPercent: { h1: netReturnPercent / 2, h2: null, h4: null, h6: netReturnPercent },
+    };
+  }
+
+  function row(outcomes: PaperTradeOutcome[], feature: string, horizon: string) {
+    return calculateOrderFlowAttribution(outcomes).rows.find(
+      (item) => item.feature === feature && item.horizon === horizon,
+    )!;
+  }
+
+  it("widens each row so the whole table keeps a 5% false-alarm rate", () => {
+    const result = calculateOrderFlowAttribution([]);
+    expect(result.familyConfidence).toBeCloseTo(1 - 0.05 / 6, 4);
+    expect(result.rows).toHaveLength(6);
+    expect(result.rows.every((item) => item.status === "collecting")).toBe(true);
+  });
+
+  it("finds flow that agrees with the signal when it wins more", () => {
+    const outcomes = Array.from({ length: 24 }, (_, index) => {
+      const agrees = index % 2 === 0;
+      return flowOutcome(index, "BUY", agrees ? 0.7 : 0.3, agrees ? 2 + (index % 4) * 0.1 : -2 - (index % 4) * 0.1);
+    });
+    expect(row(outcomes, "buy-share-h1", "h6")).toMatchObject({
+      status: "supports-signal",
+      favorableCount: 12,
+      unfavorableCount: 12,
+    });
+  });
+
+  it("mirrors buy share for SELL signals", () => {
+    // Sell-dominated flow agrees with a SELL signal.
+    const outcomes = Array.from({ length: 24 }, (_, index) => {
+      const agrees = index % 2 === 0;
+      return flowOutcome(index, "SELL", agrees ? 0.3 : 0.7, agrees ? -2 - (index % 4) * 0.1 : 2 + (index % 4) * 0.1);
+    });
+    expect(row(outcomes, "buy-share-h1", "h6").status).toBe("contradicts-signal");
+  });
+
+  it("leaves balanced flow out of both groups", () => {
+    const outcomes = Array.from({ length: 30 }, (_, index) => flowOutcome(index, "BUY", 0.5, 1));
+    expect(row(outcomes, "buy-share-h1", "h6")).toMatchObject({
+      favorableCount: 0,
+      unfavorableCount: 0,
+      status: "collecting",
+    });
   });
 });

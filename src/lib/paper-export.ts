@@ -67,6 +67,16 @@ const OUTCOME_CSV_HEADERS = [
   "net_return_percent",
   "net_pnl_usd",
   "cost_gate_passed",
+  "buy_gate",
+  "buy_gate_failures",
+  "barrier_exit",
+  "barrier_net_return_percent",
+  "net_return_1h_percent",
+  "net_return_2h_percent",
+  "net_return_4h_percent",
+  "buy_share_1h",
+  "buy_share_6h",
+  "volume_acceleration_1h",
   "won",
   "execution_locked",
 ] as const;
@@ -162,6 +172,16 @@ export function buildPaperOutcomeCsv(outcomes: PaperTradeOutcome[], context?: Pa
       outcome.netReturnPercent,
       outcome.netPnlUsd,
       outcome.costGatePassed,
+      outcome.buyGate ?? "",
+      outcome.buyGateFailures?.join(" | ") ?? "",
+      outcome.barrier?.exit ?? "",
+      outcome.barrier?.netReturnPercent ?? "",
+      outcome.horizonNetReturnsPercent?.h1 ?? "",
+      outcome.horizonNetReturnsPercent?.h2 ?? "",
+      outcome.horizonNetReturnsPercent?.h4 ?? "",
+      outcome.orderFlow?.buyShareH1 ?? "",
+      outcome.orderFlow?.buyShareH6 ?? "",
+      outcome.orderFlow?.volumeAccelerationH1 ?? "",
       outcome.won,
       true,
     ]),
@@ -246,7 +266,11 @@ export function buildPaperResearchJson(
     PaperJournalSnapshot,
     | "analyticsWindowDays"
     | "confidenceCalibrationByModel"
+    | "confidenceReliabilityByModel"
     | "regimePerformance"
+    | "buyGatePerformance"
+    | "scoringComparison"
+    | "orderFlowAttribution"
     | "dataQualityPerformance"
     | "sourceQualityImpact"
     | "sourceReasonImpact"
@@ -264,7 +288,11 @@ export function buildPaperResearchJson(
       modelScope: {
         outcomes: "chart-and-community-trend",
         confidenceCalibrationByModel: "chart-and-community-trend",
+        confidenceReliabilityByModel: "chart-and-community-trend",
         regimePerformance: "chart",
+        buyGatePerformance: "chart",
+        scoringComparison: "chart",
+        orderFlowAttribution: "chart",
         dataQualityPerformance: "chart",
         sourceQualityImpact: "chart",
         sourceReasonImpact: "chart",
@@ -273,7 +301,11 @@ export function buildPaperResearchJson(
       executionLocked: true,
       researchOnly: true,
       confidenceCalibrationByModel: journal.confidenceCalibrationByModel,
+      confidenceReliabilityByModel: journal.confidenceReliabilityByModel,
       regimePerformance: journal.regimePerformance,
+      buyGatePerformance: journal.buyGatePerformance,
+      scoringComparison: journal.scoringComparison,
+      orderFlowAttribution: journal.orderFlowAttribution,
       dataQualityPerformance: journal.dataQualityPerformance,
       sourceQualityImpact: journal.sourceQualityImpact,
       sourceReasonImpact: journal.sourceReasonImpact,

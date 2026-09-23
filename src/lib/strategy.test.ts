@@ -497,3 +497,105 @@ describe("createStrategyPlan", () => {
     expect(plan.signals[0].action).toBe("BLOCK");
   });
 });
+
+describe("createStrategyPlan buy gate", () => {
+  const blockedRisk: PortfolioRiskAssessment = {
+    ...PASS_PORTFOLIO_RISK,
+    status: "blocked",
+    blockNewBuys: true,
+    reasons: ["test"],
+  };
+  const fundedSnapshot = (assets: PortfolioAsset[]) => {
+    const input = snapshot(assets);
+    input.gasBalanceUsd = 50;
+    return input;
+  };
+
+  it.each([
+    ["passed", fundedSnapshot([asset()]), chart("BUY"), PASS_PORTFOLIO_RISK, undefined],
+    ["budget", snapshot([asset()]), chart("BUY"), PASS_PORTFOLIO_RISK, undefined],
+    ["portfolio-risk", fundedSnapshot([asset()]), chart("BUY"), blockedRisk, undefined],
+    ["model-drift", fundedSnapshot([asset()]), chart("BUY"), PASS_PORTFOLIO_RISK, DEGRADED_MODEL],
+    [
+      "not-tradable",
+      fundedSnapshot([asset({ tradability: "thin" })]),
+      chart("BUY"),
+      PASS_PORTFOLIO_RISK,
+      undefined,
+    ],
+    [
+      "contract-safety",
+      fundedSnapshot([asset({ contractSafety: { ...asset().contractSafety!, status: "review" } })]),
+      chart("BUY"),
+      PASS_PORTFOLIO_RISK,
+      undefined,
+    ],
+    [
+      "quote-preflight",
+      fundedSnapshot([asset({ quotePreflight: { ...asset().quotePreflight!, status: "blocked" } })]),
+      chart("BUY"),
+      PASS_PORTFOLIO_RISK,
+      undefined,
+    ],
+    [
+      "onchain-preflight",
+      fundedSnapshot([asset({ onchainPreflight: { ...asset().onchainPreflight!, status: "blocked" } })]),
+      chart("BUY"),
+      PASS_PORTFOLIO_RISK,
+      undefined,
+    ],
+    [
+      "robustness",
+      fundedSnapshot([asset()]),
+      chart("BUY", {
+        backtest: {
+          ...chart("BUY").backtest,
+          robustness: { ...chart("BUY").backtest.robustness, status: "review" },
+        },
+      }),
+      PASS_PORTFOLIO_RISK,
+      undefined,
+    ],
+    [
+      "cost-gate",
+      fundedSnapshot([asset()]),
+      chart("BUY", { risk: { ...chart("BUY").risk!, costGatePassed: false } }),
+      PASS_PORTFOLIO_RISK,
+      undefined,
+    ],
+  ] as const)("labels a chart BUY stopped at %s", (gate, input, analysis, risk, drift) => {
+    const plan = createStrategyPlan(input, [analysis], risk, drift);
+    expect(plan.signals[0].buyGate).toBe(gate);
+    expect(plan.signals[0].action).toBe(gate === "passed" ? "BUY" : "HOLD");
+    // The full failure list starts with the gate the plan reported.
+    expect(plan.signals[0].buyGateFailures).toEqual(
+      gate === "passed" || gate === "budget" ? [] : [gate],
+    );
+  });
+
+  it("lists every gate a BUY fails, in evaluation order", () => {
+    const input = fundedSnapshot([
+      asset({ quotePreflight: { ...asset().quotePreflight!, status: "blocked" } }),
+    ]);
+    const plan = createStrategyPlan(
+      input,
+      [chart("BUY", { risk: { ...chart("BUY").risk!, costGatePassed: false } })],
+      blockedRisk,
+      DEGRADED_MODEL,
+    );
+    expect(plan.signals[0]).toMatchObject({ action: "HOLD", buyGate: "quote-preflight" });
+    expect(plan.signals[0].buyGateFailures).toEqual([
+      "quote-preflight",
+      "cost-gate",
+      "model-drift",
+      "portfolio-risk",
+    ]);
+  });
+
+  it("leaves SELL and HOLD chart signals without a buy gate", () => {
+    const sell = createStrategyPlan(snapshot([asset()]), [chart("SELL")], PASS_PORTFOLIO_RISK);
+    const hold = createStrategyPlan(snapshot([asset()]), [chart("HOLD")], PASS_PORTFOLIO_RISK);
+    expect(sell.signals[0].buyGate).toBeUndefined();
+    expect(hold.signals[0].buyGate).toBeUndefined();
+  });
+});

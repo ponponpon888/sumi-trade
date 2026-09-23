@@ -1,7 +1,11 @@
 import type {
+  BuyGateId,
   ChartModelSnapshot,
   PaperJournalSnapshot,
   PaperAssetPerformance,
+  PaperBuyGatePerformance,
+  PaperHorizonPerformance,
+  PaperScoringComparison,
   PaperConfidenceCalibration,
   PaperConfidenceBandPerformance,
   PaperDataSourceObservation,
@@ -10,6 +14,9 @@ import type {
   PaperDecisionDataQuality,
   PaperModelPerformance,
   PaperOperationalReadiness,
+  PaperOrderFlowAttribution,
+  PaperOrderFlowFeatures,
+  PortfolioAsset,
   PaperQualification,
   PaperRegimePerformance,
   PaperPerformanceTimelinePoint,
@@ -31,6 +38,12 @@ import {
   calculateDataSourceQualityHistory,
   DATA_SOURCE_QUALITY_DEFINITION,
 } from "@/lib/data-source-quality";
+import { simulateBarrierExit } from "@/lib/barrier-scoring";
+import { calculateConfidenceReliability } from "@/lib/confidence-reliability";
+import {
+  clusteredDifferenceInterval,
+  clusteredMeanInterval,
+} from "@/lib/statistics";
 
 export const JOURNAL_WINDOW_DAYS = 7 as const;
 export const JOURNAL_ANALYTICS_WINDOW_DAYS = 30 as const;
@@ -44,6 +57,7 @@ const SCAN_BUCKET_MS = 5 * 60 * 1_000;
 const SIGNAL_COOLDOWN_MS = OUTCOME_HORIZON_HOURS * 60 * 60 * 1_000;
 const OUTCOME_HORIZON_MS = OUTCOME_HORIZON_HOURS * 60 * 60 * 1_000;
 const MAX_OUTCOME_DELAY_MS = 90 * 60 * 1_000;
+const SHORT_HORIZON_MAX_DELAY_MS = 15 * 60 * 1_000;
 const MIN_PROFIT_FACTOR = 1.2;
 const MAX_DRAWDOWN_PERCENT = 8;
 const MIN_COST_GATE_COVERAGE_PERCENT = 70;
@@ -57,6 +71,25 @@ const REGIME_ALERT_PROFIT_FACTOR = 0.8 as const;
 const MINIMUM_DATA_QUALITY_SAMPLES = 10 as const;
 const DATA_QUALITY_ALERT_GAP_PERCENTAGE_POINTS = -1 as const;
 const MINIMUM_REASON_IMPACT_SAMPLES = 5 as const;
+const MINIMUM_SCORING_SAMPLES = 20 as const;
+const MINIMUM_SCORING_INDEPENDENT_SAMPLES = 10 as const;
+const MINIMUM_BARRIER_PRICE_POINTS = 36 as const;
+const MINIMUM_BUY_GATE_SAMPLES = 10 as const;
+const MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES = 5 as const;
+const BUY_GATE_ORDER: Array<BuyGateId | "unknown"> = [
+  "passed",
+  "not-tradable",
+  "contract-safety",
+  "quote-preflight",
+  "onchain-preflight",
+  "robustness",
+  "cost-gate",
+  "model-drift",
+  "portfolio-risk",
+  "budget",
+  "not-in-plan",
+  "unknown",
+];
 const DATA_SOURCE_IDS: DataSourceId[] = [
   "blockscout",
   "dexscreener",
@@ -72,6 +105,39 @@ function round(value: number, digits = 2): number {
 
 function finitePositive(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+const MINIMUM_ORDER_FLOW_TRANSACTIONS = 20;
+const MINIMUM_ORDER_FLOW_GROUP_SAMPLES = 10 as const;
+const MINIMUM_ORDER_FLOW_GROUP_INDEPENDENT_SAMPLES = 5 as const;
+const FAVORABLE_BUY_SHARE = 0.55;
+const UNFAVORABLE_BUY_SHARE = 0.45;
+const BUSY_VOLUME_ACCELERATION = 1.5;
+const QUIET_VOLUME_ACCELERATION = 0.75;
+
+function buyShare(buys: number | null, sells: number | null): number | null {
+  if (buys === null || sells === null || buys < 0 || sells < 0) return null;
+  const total = buys + sells;
+  return total >= MINIMUM_ORDER_FLOW_TRANSACTIONS ? round(buys / total, 3) : null;
+}
+
+export function orderFlowFeatures(
+  asset: PortfolioAsset | undefined,
+): PaperOrderFlowFeatures | undefined {
+  const flow = asset?.orderFlow;
+  if (!flow) return undefined;
+  const hourlyAverage =
+    asset.volume24hUsd !== null && asset.volume24hUsd > 0
+      ? asset.volume24hUsd / 24
+      : null;
+  return {
+    buyShareH1: buyShare(flow.buysH1, flow.sellsH1),
+    buyShareH6: buyShare(flow.buysH6, flow.sellsH6),
+    volumeAccelerationH1:
+      hourlyAverage !== null && flow.volumeH1Usd !== null && flow.volumeH1Usd >= 0
+        ? round(flow.volumeH1Usd / hourlyAverage, 3)
+        : null,
+  };
 }
 
 function compactDecisionReasons(...groups: Array<Array<string | undefined>>): string[] {
@@ -224,6 +290,9 @@ export function createPaperScanRecord(
   const planBySymbol = new Map(
     data.plan.signals.map((signal) => [signal.symbol, signal]),
   );
+  const assetBySymbol = new Map(
+    data.snapshot.assets.map((asset) => [asset.symbol, asset]),
+  );
   const signals: PaperSignalObservation[] = [];
   const dataSourceQuality: PaperDataSourceObservation[] = assessDataSourceQuality(
     data.snapshot,
@@ -264,6 +333,7 @@ export function createPaperScanRecord(
         ? planned.estimatedUsd
         : 0;
 
+    const orderFlow = orderFlowFeatures(assetBySymbol.get(analysis.symbol));
     signals.push({
       decisionId: `${recordId}:chart:${analysis.symbol}:${analysis.direction}`,
       model: "chart",
@@ -283,6 +353,18 @@ export function createPaperScanRecord(
       notionalUsd: round(Math.max(plannedNotional, modelNotional)),
       estimatedCostUsd: round(analysis.risk.estimatedRoundTripCostUsd),
       costGatePassed: analysis.risk.costGatePassed,
+      ...(orderFlow ? { orderFlow } : {}),
+      stopLossPercent: analysis.risk.stopLossPercent,
+      takeProfitPercent: analysis.risk.takeProfitPercent,
+      trailingStopPercent: analysis.risk.trailingStopPercent,
+      ...(analysis.direction === "BUY"
+        ? {
+            buyGate: planned?.buyGate ?? "not-in-plan",
+            ...(planned?.buyGateFailures
+              ? { buyGateFailures: planned.buyGateFailures }
+              : {}),
+          }
+        : {}),
     });
   }
 
@@ -359,39 +441,121 @@ function selectIndependentSignals(
   return selected;
 }
 
+/** Index of the first record at or after timeMs; records are time-sorted. */
+function firstRecordIndexAtOrAfter(
+  records: PaperScanRecord[],
+  timeMs: number,
+): number {
+  let low = 0;
+  let high = records.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (records[middle].bucketTimeMs < timeMs) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function priceAtHorizon(
+  records: PaperScanRecord[],
+  priceKey: string,
+  targetMs: number,
+  maxDelayMs: number,
+): { record: PaperScanRecord; price: number } | null {
+  for (
+    let index = firstRecordIndexAtOrAfter(records, targetMs);
+    index < records.length && records[index].bucketTimeMs <= targetMs + maxDelayMs;
+    index += 1
+  ) {
+    const price = records[index].prices[priceKey];
+    if (finitePositive(price)) return { record: records[index], price };
+  }
+  return null;
+}
+
 function settleSignal(
   candidate: { record: PaperScanRecord; signal: PaperSignalObservation },
   records: PaperScanRecord[],
 ): PaperTradeOutcome | null {
-  const targetTime = candidate.record.bucketTimeMs + OUTCOME_HORIZON_MS;
-  const priceKey = candidate.signal.priceKey ?? candidate.signal.symbol;
-  const outcomeRecord = records.find(
-    (record) =>
-      record.bucketTimeMs >= targetTime &&
-      record.bucketTimeMs <= targetTime + MAX_OUTCOME_DELAY_MS &&
-      finitePositive(record.prices[priceKey]),
+  const { signal } = candidate;
+  const entryMs = candidate.record.bucketTimeMs;
+  const priceKey = signal.priceKey ?? signal.symbol;
+  const settled = priceAtHorizon(
+    records,
+    priceKey,
+    entryMs + OUTCOME_HORIZON_MS,
+    MAX_OUTCOME_DELAY_MS,
   );
-  const exitPrice = outcomeRecord?.prices[priceKey];
-
-  if (!outcomeRecord || !finitePositive(exitPrice)) return null;
-
-  const rawChange =
-    ((exitPrice - candidate.signal.entryPriceUsd) /
-      candidate.signal.entryPriceUsd) *
-    100;
-  const grossReturnPercent =
-    candidate.signal.direction === "BUY" ? rawChange : -rawChange;
+  if (!settled) return null;
+  const { record: outcomeRecord, price: exitPrice } = settled;
+  const sign = signal.direction === "BUY" ? 1 : -1;
+  const favorableReturn = (price: number) =>
+    sign * ((price - signal.entryPriceUsd) / signal.entryPriceUsd) * 100;
   const costPercent =
-    candidate.signal.notionalUsd > 0
-      ? (candidate.signal.estimatedCostUsd / candidate.signal.notionalUsd) * 100
+    signal.notionalUsd > 0
+      ? (signal.estimatedCostUsd / signal.notionalUsd) * 100
       : 0;
+  const netPnl = (grossReturnPercent: number) =>
+    signal.notionalUsd * (grossReturnPercent / 100) - signal.estimatedCostUsd;
+
+  const grossReturnPercent = favorableReturn(exitPrice);
   const netReturnPercent = grossReturnPercent - costPercent;
-  const netPnlUsd =
-    candidate.signal.notionalUsd * (grossReturnPercent / 100) -
-    candidate.signal.estimatedCostUsd;
+  const netPnlUsd = netPnl(grossReturnPercent);
+
+  const shortHorizon = (hours: number) => {
+    const point = priceAtHorizon(
+      records,
+      priceKey,
+      entryMs + hours * ONE_HOUR_MS,
+      SHORT_HORIZON_MAX_DELAY_MS,
+    );
+    return point ? round(favorableReturn(point.price) - costPercent) : null;
+  };
+
+  let barrier: PaperTradeOutcome["barrier"];
+  if (
+    finitePositive(signal.stopLossPercent) &&
+    finitePositive(signal.takeProfitPercent) &&
+    finitePositive(signal.trailingStopPercent)
+  ) {
+    const path = [];
+    for (
+      let index = firstRecordIndexAtOrAfter(records, entryMs + 1);
+      index < records.length &&
+        records[index].bucketTimeMs < outcomeRecord.bucketTimeMs;
+      index += 1
+    ) {
+      const price = records[index].prices[priceKey];
+      if (finitePositive(price)) {
+        path.push({ timeMs: records[index].bucketTimeMs, priceUsd: price });
+      }
+    }
+    const result = simulateBarrierExit(
+      {
+        direction: signal.direction,
+        entryPriceUsd: signal.entryPriceUsd,
+        stopLossPercent: signal.stopLossPercent,
+        takeProfitPercent: signal.takeProfitPercent,
+        trailingStopPercent: signal.trailingStopPercent,
+      },
+      path,
+      { timeMs: outcomeRecord.bucketTimeMs, priceUsd: exitPrice },
+    );
+    const barrierPnl = netPnl(result.grossReturnPercent);
+    barrier = {
+      exit: result.exit,
+      exitTime: new Date(result.exitTimeMs).toISOString(),
+      exitPriceUsd: result.exitPriceUsd,
+      grossReturnPercent: round(result.grossReturnPercent),
+      netReturnPercent: round(result.grossReturnPercent - costPercent),
+      netPnlUsd: round(barrierPnl),
+      won: barrierPnl > 0,
+      pricePointCount: path.length,
+    };
+  }
 
   return {
-    ...candidate.signal,
+    ...signal,
     entryDataQuality: decisionDataQuality(candidate.record),
     signalTime: candidate.record.generatedAt,
     outcomeTime: outcomeRecord.generatedAt,
@@ -400,6 +564,13 @@ function settleSignal(
     netReturnPercent: round(netReturnPercent),
     netPnlUsd: round(netPnlUsd),
     won: netPnlUsd > 0,
+    ...(barrier ? { barrier } : {}),
+    horizonNetReturnsPercent: {
+      h1: shortHorizon(1),
+      h2: shortHorizon(2),
+      h4: shortHorizon(4),
+      h6: round(netReturnPercent),
+    },
   };
 }
 
@@ -1069,6 +1240,319 @@ export function calculateRegimePerformance(
   });
 }
 
+/**
+ * Gates that stopped a chart BUY, or null for records saved before gate
+ * tracking. An empty list means the BUY passed every gate.
+ */
+function outcomeBuyBlockers(outcome: PaperTradeOutcome): BuyGateId[] | null {
+  if (!outcome.buyGate) return null;
+  if (outcome.buyGate === "passed") return [];
+  const failures = outcome.buyGateFailures;
+  return failures?.length ? failures : [outcome.buyGate];
+}
+
+/**
+ * Chart BUYs are scored whether or not the plan let them through. Each gate is
+ * judged only on BUYs it blocked alone, because those are exactly the BUYs that
+ * removing the gate would have let through.
+ */
+export function calculateBuyGatePerformance(
+  outcomes: PaperTradeOutcome[],
+): PaperBuyGatePerformance[] {
+  const buys = outcomes
+    .filter(
+      (outcome) => signalModel(outcome) === "chart" && outcome.direction === "BUY",
+    )
+    .map((outcome) => ({ outcome, blockers: outcomeBuyBlockers(outcome) }));
+
+  return BUY_GATE_ORDER.flatMap((gate) => {
+    const matches = (blockers: BuyGateId[] | null) =>
+      gate === "unknown"
+        ? blockers === null
+        : gate === "passed"
+          ? blockers?.length === 0
+          : blockers?.includes(gate) ?? false;
+    const blocked = buys.filter((item) => matches(item.blockers));
+    if (!blocked.length && gate !== "passed") return [];
+    const scoped = blocked
+      .filter((item) => gate === "unknown" || gate === "passed" || item.blockers!.length === 1)
+      .map((item) => item.outcome);
+    const metrics = calculateOutcomeMetrics(scoped, 0);
+    const clustered = clusteredMeanInterval(
+      scoped.map((outcome) => ({
+        key: outcome.signalTime,
+        value: outcome.netReturnPercent,
+      })),
+    );
+    const interval = {
+      independentSampleCount: clustered.independentSampleCount,
+      low: clustered.low === null ? null : round(clustered.low),
+      high: clustered.high === null ? null : round(clustered.high),
+    };
+    const samplePassed =
+      metrics.maturedCount >= MINIMUM_BUY_GATE_SAMPLES &&
+      interval.independentSampleCount >= MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES;
+    const status: PaperBuyGatePerformance["status"] =
+      gate === "passed"
+        ? "baseline"
+        : !samplePassed
+          ? "collecting"
+          : interval.high !== null && interval.high < 0
+            ? "protective"
+            : interval.low !== null && interval.low > 0
+              ? "missed-profit"
+              : "inconclusive";
+    const reasons = status === "baseline"
+      ? ["全ての判定を通過したBUYの成績です。見送り判定の比較基準に使います。"]
+      : status === "collecting"
+        ? [
+            `単独で止めたBUYを${metrics.maturedCount}/${MINIMUM_BUY_GATE_SAMPLES}件、` +
+              `独立スキャン${interval.independentSampleCount}/${MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES}回収集中です。`,
+          ]
+        : status === "protective"
+          ? ["95%区間全体がマイナスです。この判定は損失回避に寄与しています。"]
+          : status === "missed-profit"
+            ? ["95%区間全体がプラスです。この判定が勝てるBUYを止めている可能性があります。"]
+            : ["95%区間が0をまたいでおり、判定の効果はまだ断定できません。"];
+
+    return [{
+      gate,
+      blockedCount: blocked.length,
+      maturedCount: metrics.maturedCount,
+      independentSampleCount: interval.independentSampleCount,
+      winRate: metrics.winRate,
+      netPnlUsd: metrics.netPnlUsd,
+      averageNetReturnPercent: metrics.averageNetReturnPercent,
+      confidenceLowPercent: interval.low,
+      confidenceHighPercent: interval.high,
+      profitFactor: metrics.profitFactor,
+      minimumSamples: MINIMUM_BUY_GATE_SAMPLES,
+      minimumIndependentSamples: MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES,
+      status,
+      reasons,
+      researchOnly: true,
+    }];
+  });
+}
+
+function scoringSummary(
+  outcomes: Array<{ netReturnPercent: number; netPnlUsd: number; won: boolean }>,
+): PaperScoringComparison["barrier"] {
+  const wins = outcomes.filter((outcome) => outcome.won);
+  const grossProfit = outcomes
+    .filter((outcome) => outcome.netPnlUsd > 0)
+    .reduce((total, outcome) => total + outcome.netPnlUsd, 0);
+  const grossLoss = Math.abs(
+    outcomes
+      .filter((outcome) => outcome.netPnlUsd <= 0)
+      .reduce((total, outcome) => total + outcome.netPnlUsd, 0),
+  );
+  return {
+    winRate: outcomes.length ? round((wins.length / outcomes.length) * 100, 1) : 0,
+    averageNetReturnPercent: outcomes.length
+      ? round(
+        outcomes.reduce((total, outcome) => total + outcome.netReturnPercent, 0) /
+          outcomes.length,
+      )
+      : 0,
+    netPnlUsd: round(outcomes.reduce((total, outcome) => total + outcome.netPnlUsd, 0)),
+    profitFactor: grossLoss > 0 ? round(grossProfit / grossLoss) : null,
+  };
+}
+
+/**
+ * Compares the fixed six-hour score with the signal's own exit rules on the
+ * same chart signals, and shows which holding time the signals work best at.
+ * Research only: promotion keeps using the six-hour score.
+ */
+export function calculateScoringComparison(
+  outcomes: PaperTradeOutcome[],
+): PaperScoringComparison {
+  const chart = outcomes.filter((outcome) => signalModel(outcome) === "chart");
+  const withBarrier = chart.filter((outcome) => outcome.barrier);
+  const paired = withBarrier.filter(
+    (outcome) => outcome.barrier!.pricePointCount >= MINIMUM_BARRIER_PRICE_POINTS,
+  );
+  const difference = clusteredMeanInterval(
+    paired.map((outcome) => ({
+      key: outcome.signalTime,
+      value: outcome.barrier!.netReturnPercent - outcome.netReturnPercent,
+    })),
+  );
+  const exitMix: PaperScoringComparison["exitMix"] = {
+    "take-profit": 0,
+    "stop-loss": 0,
+    "trailing-stop": 0,
+    horizon: 0,
+  };
+  for (const outcome of paired) exitMix[outcome.barrier!.exit] += 1;
+
+  const horizonDefinitions = [
+    { horizon: "h1", hours: 1 },
+    { horizon: "h2", hours: 2 },
+    { horizon: "h4", hours: 4 },
+    { horizon: "h6", hours: 6 },
+  ] as const;
+  const horizons: PaperHorizonPerformance[] = horizonDefinitions.map(
+    ({ horizon, hours }) => {
+      const values = chart.flatMap((outcome) => {
+        const value = horizon === "h6"
+          ? outcome.netReturnPercent
+          : outcome.horizonNetReturnsPercent?.[horizon];
+        return typeof value === "number" && Number.isFinite(value)
+          ? [{ key: outcome.signalTime, value }]
+          : [];
+      });
+      const interval = clusteredMeanInterval(values);
+      return {
+        horizon,
+        hours,
+        maturedCount: values.length,
+        independentSampleCount: interval.independentSampleCount,
+        averageNetReturnPercent: interval.mean === null
+          ? null
+          : round(values.reduce((total, item) => total + item.value, 0) / values.length),
+        confidenceLowPercent: interval.low === null ? null : round(interval.low),
+        confidenceHighPercent: interval.high === null ? null : round(interval.high),
+      };
+    },
+  );
+
+  const samplePassed =
+    paired.length >= MINIMUM_SCORING_SAMPLES &&
+    difference.independentSampleCount >= MINIMUM_SCORING_INDEPENDENT_SAMPLES;
+  const status: PaperScoringComparison["status"] = !samplePassed
+    ? "collecting"
+    : difference.low !== null && difference.low > 0
+      ? "barrier-better"
+      : difference.high !== null && difference.high < 0
+        ? "barrier-worse"
+        : "similar";
+  const reasons = status === "collecting"
+    ? [
+        `損切り・利確ルールで採点できたシグナルを${paired.length}/${MINIMUM_SCORING_SAMPLES}件、` +
+          `独立スキャン${difference.independentSampleCount}/${MINIMUM_SCORING_INDEPENDENT_SAMPLES}回収集中です。`,
+      ]
+    : status === "barrier-better"
+      ? ["損切り・利確ルールで閉じた方が、6時間固定より有意に良い結果でした。"]
+      : status === "barrier-worse"
+        ? ["損切り・利確ルールで閉じた方が、6時間固定より有意に悪い結果でした。出口ルールの見直し候補です。"]
+        : ["2つの採点方法の差は、まだ有意ではありません。"];
+
+  return {
+    status,
+    minimumSamples: MINIMUM_SCORING_SAMPLES,
+    minimumIndependentSamples: MINIMUM_SCORING_INDEPENDENT_SAMPLES,
+    minimumPricePointCount: MINIMUM_BARRIER_PRICE_POINTS,
+    pairedCount: paired.length,
+    independentSampleCount: difference.independentSampleCount,
+    sparsePathCount: withBarrier.length - paired.length,
+    fixedHorizon: scoringSummary(paired),
+    barrier: scoringSummary(paired.map((outcome) => outcome.barrier!)),
+    exitMix,
+    differenceLowPercent: difference.low === null ? null : round(difference.low),
+    differenceHighPercent: difference.high === null ? null : round(difference.high),
+    horizons,
+    reasons,
+    researchOnly: true,
+  };
+}
+
+/**
+ * Splits chart outcomes by the order flow recorded at signal time and checks
+ * whether the favorable side did better. Every feature x horizon row is one
+ * test, so the interval is Bonferroni-widened to keep the whole table at a 5%
+ * false-alarm rate.
+ */
+export function calculateOrderFlowAttribution(
+  outcomes: PaperTradeOutcome[],
+): PaperOrderFlowAttribution {
+  const evidenced = outcomes.filter(
+    (outcome) => signalModel(outcome) === "chart" && outcome.orderFlow,
+  );
+  const features = ["buy-share-h1", "buy-share-h6", "volume-acceleration-h1"] as const;
+  const horizons = ["h1", "h6"] as const;
+  const familyConfidence = 1 - 0.05 / (features.length * horizons.length);
+
+  const side = (
+    outcome: PaperTradeOutcome,
+    feature: (typeof features)[number],
+  ): "favorable" | "unfavorable" | null => {
+    const flow = outcome.orderFlow!;
+    if (feature === "volume-acceleration-h1") {
+      const value = flow.volumeAccelerationH1;
+      if (value === null) return null;
+      return value >= BUSY_VOLUME_ACCELERATION
+        ? "favorable"
+        : value <= QUIET_VOLUME_ACCELERATION
+          ? "unfavorable"
+          : null;
+    }
+    const share = feature === "buy-share-h1" ? flow.buyShareH1 : flow.buyShareH6;
+    if (share === null) return null;
+    const support = outcome.direction === "BUY" ? share : 1 - share;
+    return support >= FAVORABLE_BUY_SHARE
+      ? "favorable"
+      : support <= UNFAVORABLE_BUY_SHARE
+        ? "unfavorable"
+        : null;
+  };
+
+  const rows = features.flatMap((feature) =>
+    horizons.map((horizon) => {
+      const groups = { favorable: [] as Array<{ key: string; value: number }>, unfavorable: [] as Array<{ key: string; value: number }> };
+      for (const outcome of evidenced) {
+        const group = side(outcome, feature);
+        const value = horizon === "h6"
+          ? outcome.netReturnPercent
+          : outcome.horizonNetReturnsPercent?.h1;
+        if (!group || typeof value !== "number" || !Number.isFinite(value)) continue;
+        groups[group].push({ key: outcome.signalTime, value });
+      }
+      const average = (items: Array<{ value: number }>) => items.length
+        ? round(items.reduce((total, item) => total + item.value, 0) / items.length)
+        : null;
+      const interval = clusteredDifferenceInterval(
+        groups.favorable,
+        groups.unfavorable,
+        familyConfidence,
+      );
+      const samplePassed =
+        groups.favorable.length >= MINIMUM_ORDER_FLOW_GROUP_SAMPLES &&
+        groups.unfavorable.length >= MINIMUM_ORDER_FLOW_GROUP_SAMPLES &&
+        interval.leftSampleCount >= MINIMUM_ORDER_FLOW_GROUP_INDEPENDENT_SAMPLES &&
+        interval.rightSampleCount >= MINIMUM_ORDER_FLOW_GROUP_INDEPENDENT_SAMPLES;
+      const status = !samplePassed
+        ? "collecting" as const
+        : interval.low !== null && interval.low > 0
+          ? "supports-signal" as const
+          : interval.high !== null && interval.high < 0
+            ? "contradicts-signal" as const
+            : "no-edge" as const;
+      return {
+        feature,
+        horizon,
+        favorableCount: groups.favorable.length,
+        unfavorableCount: groups.unfavorable.length,
+        favorableAverageNetReturnPercent: average(groups.favorable),
+        unfavorableAverageNetReturnPercent: average(groups.unfavorable),
+        differenceLowPercent: interval.low === null ? null : round(interval.low),
+        differenceHighPercent: interval.high === null ? null : round(interval.high),
+        status,
+      };
+    }),
+  );
+
+  return {
+    familyConfidence: round(familyConfidence, 4),
+    minimumSamplesPerGroup: MINIMUM_ORDER_FLOW_GROUP_SAMPLES,
+    minimumIndependentSamplesPerGroup: MINIMUM_ORDER_FLOW_GROUP_INDEPENDENT_SAMPLES,
+    evidencedCount: evidenced.length,
+    rows,
+    researchOnly: true,
+  };
+}
+
 function performanceTimeline(
   outcomes: PaperTradeOutcome[],
   nowMs: number,
@@ -1201,7 +1685,14 @@ export function emptyPaperJournal(
       chart: calculateConfidenceCalibration([], "chart"),
       "community-trend": calculateConfidenceCalibration([], "community-trend"),
     },
+    confidenceReliabilityByModel: {
+      chart: calculateConfidenceReliability([], "chart"),
+      "community-trend": calculateConfidenceReliability([], "community-trend"),
+    },
     regimePerformance: calculateRegimePerformance([]),
+    buyGatePerformance: calculateBuyGatePerformance([]),
+    scoringComparison: calculateScoringComparison([]),
+    orderFlowAttribution: calculateOrderFlowAttribution([]),
     assetPerformance: [],
     performanceTimeline: [],
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
@@ -1354,7 +1845,17 @@ export function evaluatePaperJournal(
         "community-trend",
       ),
     },
+    confidenceReliabilityByModel: {
+      chart: calculateConfidenceReliability(analyticsOutcomes, "chart"),
+      "community-trend": calculateConfidenceReliability(
+        communityAnalyticsOutcomes,
+        "community-trend",
+      ),
+    },
     regimePerformance: calculateRegimePerformance(analyticsOutcomes),
+    buyGatePerformance: calculateBuyGatePerformance(analyticsOutcomes),
+    scoringComparison: calculateScoringComparison(analyticsOutcomes),
+    orderFlowAttribution: calculateOrderFlowAttribution(analyticsOutcomes),
     assetPerformance: assetPerformance(
       analyticsOutcomes,
       analyticsStartingCapital,

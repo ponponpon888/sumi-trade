@@ -361,6 +361,15 @@ export interface DataSourceIncidentItem {
   latestRecoveredAt: string | null;
 }
 
+/** Recent DEX activity for the selected pair; null when the API omitted it. */
+export interface MarketOrderFlow {
+  buysH1: number | null;
+  sellsH1: number | null;
+  buysH6: number | null;
+  sellsH6: number | null;
+  volumeH1Usd: number | null;
+}
+
 export interface MarketData {
   dexId: string;
   pairAddress: string;
@@ -369,6 +378,7 @@ export interface MarketData {
   liquidityUsd: number;
   volume24hUsd: number;
   priceChange24h: number | null;
+  orderFlow?: MarketOrderFlow;
 }
 
 export interface OnchainPreflightAssessment {
@@ -403,6 +413,7 @@ export interface PortfolioAsset {
   contractSafety: ContractSafetyAssessment | null;
   quotePreflight: PreflightAssessment | null;
   onchainPreflight: OnchainPreflightAssessment | null;
+  orderFlow?: MarketOrderFlow | null;
 }
 
 export interface PortfolioSnapshot {
@@ -422,6 +433,20 @@ export interface PortfolioSnapshot {
   sourceChecks?: { dexscreener: DataSourceCheckResult[] };
 }
 
+/** Which step of the plan stopped a chart BUY, or "passed" when the BUY survived. */
+export type BuyGateId =
+  | "passed"
+  | "not-tradable"
+  | "contract-safety"
+  | "quote-preflight"
+  | "onchain-preflight"
+  | "robustness"
+  | "cost-gate"
+  | "model-drift"
+  | "portfolio-risk"
+  | "budget"
+  | "not-in-plan";
+
 export interface StrategySignal {
   symbol: string;
   action: SignalAction;
@@ -430,6 +455,13 @@ export interface StrategySignal {
   reason: string;
   modelScore: number | null;
   costGatePassed: boolean | null;
+  /** Set only when the chart model said BUY for this asset. */
+  buyGate?: BuyGateId;
+  /**
+   * Every filter gate the chart BUY failed, in evaluation order. Empty when all
+   * filters passed (the BUY may still stop at "budget").
+   */
+  buyGateFailures?: BuyGateId[];
 }
 
 export interface PortfolioCorrelationPair {
@@ -590,6 +622,50 @@ export interface PaperSignalObservation {
   notionalUsd: number;
   estimatedCostUsd: number;
   costGatePassed: boolean;
+  /** Chart BUY only. Missing on records saved before gate tracking. */
+  buyGate?: BuyGateId;
+  buyGateFailures?: BuyGateId[];
+  /** Order-flow context at signal time. Recorded for research, not used by the model. */
+  orderFlow?: PaperOrderFlowFeatures;
+  /** Chart exit plan at signal time. Missing on older records. */
+  stopLossPercent?: number;
+  takeProfitPercent?: number;
+  trailingStopPercent?: number;
+}
+
+export interface PaperOrderFlowFeatures {
+  /** Share of DEX buys among buy + sell transactions; null below 20 transactions. */
+  buyShareH1: number | null;
+  buyShareH6: number | null;
+  /** Last-hour volume against the 24h hourly average; 1 means an average hour. */
+  volumeAccelerationH1: number | null;
+}
+
+export type PaperBarrierExit =
+  | "take-profit"
+  | "stop-loss"
+  | "trailing-stop"
+  | "horizon";
+
+/** Result if the signal had been closed by its own stop / take-profit rules. */
+export interface PaperBarrierOutcome {
+  exit: PaperBarrierExit;
+  exitTime: string;
+  exitPriceUsd: number;
+  grossReturnPercent: number;
+  netReturnPercent: number;
+  netPnlUsd: number;
+  won: boolean;
+  /** Scan prices seen strictly between entry and the six-hour horizon (71 when none are missing). */
+  pricePointCount: number;
+}
+
+/** Net return after costs if the signal had been closed at each horizon. */
+export interface PaperHorizonNetReturns {
+  h1: number | null;
+  h2: number | null;
+  h4: number | null;
+  h6: number;
 }
 
 export interface SafetyControlSnapshot {
@@ -623,6 +699,8 @@ export interface PaperTradeOutcome extends PaperSignalObservation {
   netPnlUsd: number;
   won: boolean;
   entryDataQuality?: PaperDecisionDataQuality;
+  barrier?: PaperBarrierOutcome;
+  horizonNetReturnsPercent?: PaperHorizonNetReturns;
 }
 
 export interface PaperDataQualityPerformance {
@@ -752,6 +830,151 @@ export interface PaperConfidenceCalibration {
   researchOnly: true;
 }
 
+export interface PaperConfidenceReliability {
+  model: PaperSignalModel;
+  /**
+   * informative: out-of-sample, confidence-based win probabilities beat the
+   *   base win rate with 95% confidence and rise with confidence.
+   * inverted: they beat the base rate, but win probability falls as
+   *   confidence rises.
+   * uninformative: no significant improvement over the base win rate.
+   */
+  status: "collecting" | "informative" | "inverted" | "uninformative";
+  method: "platt-walk-forward";
+  minimumTrainSamples: 20;
+  minimumTestSamples: 10;
+  /** Walk-forward folds that had enough settled history to be scored. */
+  foldCount: number;
+  /** Outcomes scored out of sample, across all folds. */
+  testCount: number;
+  /** Distinct scan times among testCount; one scan counts as one sample. */
+  independentSampleCount: number;
+  /** Training outcomes left out because they settled after the fold began. */
+  embargoDroppedCount: number;
+  brierScore: number | null;
+  baselineBrierScore: number | null;
+  /** 1 - brierScore / baselineBrierScore on the out-of-sample outcomes. */
+  brierSkillScore: number | null;
+  /** 95% interval of the per-outcome Brier improvement over the base rate. */
+  improvementLow: number | null;
+  improvementHigh: number | null;
+  /** Change in log-odds of a win per 10 confidence points (all outcomes). */
+  slopePer10Points: number | null;
+  /** Win probability fitted on all outcomes, for display. */
+  calibratedWinRates: Array<{ confidence: number; winProbabilityPercent: number }>;
+  reasons: string[];
+  researchOnly: true;
+}
+
+export interface PaperScoringSummary {
+  winRate: number;
+  averageNetReturnPercent: number;
+  netPnlUsd: number;
+  profitFactor: number | null;
+}
+
+export interface PaperHorizonPerformance {
+  horizon: keyof PaperHorizonNetReturns;
+  hours: 1 | 2 | 4 | 6;
+  maturedCount: number;
+  independentSampleCount: number;
+  averageNetReturnPercent: number | null;
+  confidenceLowPercent: number | null;
+  confidenceHighPercent: number | null;
+}
+
+/**
+ * The same chart signals scored two ways: at the fixed six-hour horizon
+ * (used for promotion) and by their own stop / take-profit rules.
+ */
+export interface PaperScoringComparison {
+  /**
+   * barrier-better / barrier-worse: the 95% interval of the per-signal
+   * difference (barrier minus six-hour) lies wholly above / below zero.
+   */
+  status: "collecting" | "barrier-better" | "barrier-worse" | "similar";
+  minimumSamples: 20;
+  minimumIndependentSamples: 10;
+  /** Paths with fewer scan prices than this are left out as too sparse. */
+  minimumPricePointCount: 36;
+  pairedCount: number;
+  independentSampleCount: number;
+  sparsePathCount: number;
+  fixedHorizon: PaperScoringSummary;
+  barrier: PaperScoringSummary;
+  exitMix: Record<PaperBarrierExit, number>;
+  differenceLowPercent: number | null;
+  differenceHighPercent: number | null;
+  horizons: PaperHorizonPerformance[];
+  reasons: string[];
+  researchOnly: true;
+}
+
+export type PaperOrderFlowFeatureId =
+  | "buy-share-h1"
+  | "buy-share-h6"
+  | "volume-acceleration-h1";
+
+export interface PaperOrderFlowAttributionRow {
+  feature: PaperOrderFlowFeatureId;
+  horizon: "h1" | "h6";
+  /**
+   * For buy share: signals the flow agreed with (buys dominate for a BUY,
+   * sells for a SELL) against those it disagreed with. For volume
+   * acceleration: busy hours against quiet hours.
+   */
+  favorableCount: number;
+  unfavorableCount: number;
+  favorableAverageNetReturnPercent: number | null;
+  unfavorableAverageNetReturnPercent: number | null;
+  /** Interval of favorable minus unfavorable, at the family confidence. */
+  differenceLowPercent: number | null;
+  differenceHighPercent: number | null;
+  status: "collecting" | "supports-signal" | "contradicts-signal" | "no-edge";
+}
+
+/**
+ * Whether DEX order flow at signal time separates good chart signals from bad
+ * ones. Research only: the chart model does not read these features.
+ */
+export interface PaperOrderFlowAttribution {
+  /** Bonferroni-adjusted so all rows together keep a 5% false-alarm rate. */
+  familyConfidence: number;
+  minimumSamplesPerGroup: 10;
+  minimumIndependentSamplesPerGroup: 5;
+  evidencedCount: number;
+  rows: PaperOrderFlowAttributionRow[];
+  researchOnly: true;
+}
+
+export interface PaperBuyGatePerformance {
+  gate: BuyGateId | "unknown";
+  /** BUYs this gate failed, alone or together with other gates. */
+  blockedCount: number;
+  /** BUYs stopped by this gate alone; every metric below uses only these. */
+  maturedCount: number;
+  /** Distinct scan times among maturedCount; BUYs from one scan move together. */
+  independentSampleCount: number;
+  winRate: number;
+  netPnlUsd: number;
+  averageNetReturnPercent: number;
+  /** Student-t 95% interval of the per-scan mean net return. */
+  confidenceLowPercent: number | null;
+  confidenceHighPercent: number | null;
+  profitFactor: number | null;
+  minimumSamples: 10;
+  minimumIndependentSamples: 5;
+  /**
+   * baseline: BUYs that passed every gate.
+   * protective: the whole interval is below 0; the gate avoided losses.
+   * missed-profit: the whole interval is above 0; the gate blocked winners.
+   * inconclusive: the interval still contains 0.
+   */
+  status: "baseline" | "collecting" | "protective" | "missed-profit" | "inconclusive";
+  reasons: string[];
+  researchOnly: true;
+}
+
 export interface PaperRegimePerformance {
   regime: MarketRegime;
   maturedCount: number;
@@ -821,7 +1044,11 @@ export interface PaperJournalSnapshot {
   periodPerformanceByModel: Record<PaperSignalModel, PaperPeriodPerformance[]>;
   driftPerformanceByModel: Record<PaperSignalModel, PaperDriftPerformance>;
   confidenceCalibrationByModel: Record<PaperSignalModel, PaperConfidenceCalibration>;
+  confidenceReliabilityByModel: Record<PaperSignalModel, PaperConfidenceReliability>;
   regimePerformance: PaperRegimePerformance[];
+  buyGatePerformance: PaperBuyGatePerformance[];
+  scoringComparison: PaperScoringComparison;
+  orderFlowAttribution: PaperOrderFlowAttribution;
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];

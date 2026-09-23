@@ -1789,6 +1789,10 @@ a {
   margin-top: 16px;
 }
 
+.calibration-bands.calibration-probabilities {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .calibration-bands > div {
   display: flex;
   flex-direction: column;
@@ -3406,10 +3410,11 @@ a {
   .calibration-grid { grid-template-columns: 1fr; }
   .calibration-card + .calibration-card { border-left: 0; border-top: 1px solid var(--line); }
   .calibration-board-heading { align-items: start; flex-direction: column; gap: 8px; }
+  .calibration-bands.calibration-probabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
+  .calibration-probabilities > div:nth-child(odd) { border-left: 0; padding-left: 0; }
   .regime-performance-heading { align-items: start; flex-direction: column; gap: 8px; }
   .regime-performance-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .regime-performance-grid article:nth-child(3),
-  .regime-performance-grid article:nth-child(5) { border-left: 0; }
+  .regime-performance-grid article:nth-child(odd) { border-left: 0; }
   .regime-performance-grid article:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .performance-detail-grid { grid-template-columns: 1fr; }
   .asset-performance-card { border-left: 0; border-top: 1px solid var(--line); }

@@ -66,4 +66,37 @@ describe("dexscreener market lookups", () => {
     expect(markets.get(FOUND)).toMatchObject({ priceUsd: 1.5 });
     expect(markets.get(LIMITED)).toBeNull();
   });
+
+  it("reads recent buy and sell counts without requiring them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.endsWith(FOUND)) {
+          return json({
+            pairs: [{
+              ...pair(FOUND),
+              volume: { h1: 3_000, h24: 48_000 },
+              txns: { m5: { buys: 1, sells: 0 }, h1: { buys: 30, sells: 10 }, h6: { buys: 90, sells: 110 } },
+            }],
+          });
+        }
+        return json({ pairs: [pair(NO_PAIR)] });
+      }),
+    );
+
+    const lookups = await getTokenMarketLookups([FOUND, NO_PAIR]);
+    expect(lookups.get(FOUND)).toMatchObject({
+      status: "found",
+      market: {
+        orderFlow: { buysH1: 30, sellsH1: 10, buysH6: 90, sellsH6: 110, volumeH1Usd: 3_000 },
+      },
+    });
+    expect(lookups.get(NO_PAIR)).toMatchObject({
+      status: "found",
+      market: {
+        orderFlow: { buysH1: null, sellsH1: null, buysH6: null, sellsH6: null, volumeH1Usd: null },
+      },
+    });
+  });
 });

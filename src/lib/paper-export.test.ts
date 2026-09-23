@@ -12,7 +12,8 @@ import {
   paperResearchExportFilename,
   parsePaperExportRequest,
 } from "@/lib/paper-export";
-import { calculateDataQualityPerformance, calculateSourceQualityImpact, calculateSourceReasonImpact } from "@/lib/paper-journal-core";
+import { calculateConfidenceReliability } from "@/lib/confidence-reliability";
+import { calculateBuyGatePerformance, calculateOrderFlowAttribution, calculateScoringComparison, calculateDataQualityPerformance, calculateSourceQualityImpact, calculateSourceReasonImpact } from "@/lib/paper-journal-core";
 import type {
   PaperConfidenceCalibration,
   PaperRegimePerformance,
@@ -41,6 +42,7 @@ function outcome(patch: Partial<PaperTradeOutcome> = {}): PaperTradeOutcome {
     notionalUsd: 50,
     estimatedCostUsd: 2,
     costGatePassed: true,
+    buyGate: "passed",
     signalTime: "2026-09-01T00:00:00.000Z",
     outcomeTime: "2026-09-01T06:00:00.000Z",
     exitPriceUsd: 1.1,
@@ -100,7 +102,7 @@ describe("paper research export", () => {
 
     expect(csv.startsWith("\uFEFFsignal_time,")).toBe(true);
     expect(csv).toContain(
-      "decision-1,SUMI,BUY,72,68,uptrend,5分・15分・1時間が上向き | コストゲート通過,partial,92,geckoterminal,,1,1.1,50,2,10,6,3,true,true,true",
+      "decision-1,SUMI,BUY,72,68,uptrend,5分・15分・1時間が上向き | コストゲート通過,partial,92,geckoterminal,,1,1.1,50,2,10,6,3,true,passed,,,,,,,,,,true,true",
     );
     expect(csv.endsWith("\r\n")).toBe(true);
   });
@@ -133,7 +135,7 @@ describe("paper research export", () => {
       netReturnPercent: -6, won: false,
     })]);
     expect(csv).toContain(",ordinary-id, SUMI,BUY,");
-    expect(csv).toContain(",10,-6,-3,true,false,true");
+    expect(csv).toContain(",10,-6,-3,true,passed,,,,,,,,,,false,true");
     expect(csv).not.toContain("'-6");
   });
 
@@ -161,7 +163,14 @@ describe("paper research export", () => {
           chart: calibration("chart"),
           "community-trend": calibration("community-trend"),
         },
+        confidenceReliabilityByModel: {
+          chart: calculateConfidenceReliability([outcome()], "chart"),
+          "community-trend": calculateConfidenceReliability([], "community-trend"),
+        },
         regimePerformance: [regime()],
+        buyGatePerformance: calculateBuyGatePerformance([outcome()]),
+        scoringComparison: calculateScoringComparison([outcome()]),
+        orderFlowAttribution: calculateOrderFlowAttribution([outcome()]),
         dataQualityPerformance: calculateDataQualityPerformance([outcome()]),
         sourceQualityImpact: calculateSourceQualityImpact([outcome()]),
         sourceReasonImpact: calculateSourceReasonImpact([outcome()]),
@@ -185,6 +194,15 @@ describe("paper research export", () => {
     expect(parsed.outcomes).toHaveLength(1);
     expect(parsed.outcomes[0].decisionReasons).toHaveLength(2);
     expect(parsed.regimePerformance[0].regime).toBe("uptrend");
+    expect(parsed.modelScope.buyGatePerformance).toBe("chart");
+    expect(parsed.scoringComparison).toEqual(calculateScoringComparison([outcome()]));
+    expect(parsed.orderFlowAttribution.rows).toHaveLength(6);
+    expect(parsed.confidenceReliabilityByModel.chart).toMatchObject({
+      status: "collecting",
+      method: "platt-walk-forward",
+    });
+    expect(parsed.buyGatePerformance).toEqual(calculateBuyGatePerformance([outcome()]));
+    expect(parsed.outcomes[0].buyGate).toBe("passed");
   });
 
   it("strips internal fields from stored outcomes and nested quality evidence", () => {
@@ -197,7 +215,14 @@ describe("paper research export", () => {
     const input = {
       analyticsWindowDays: 30 as const,
       confidenceCalibrationByModel: { chart: calibration("chart"), "community-trend": calibration("community-trend") },
+      confidenceReliabilityByModel: {
+        chart: calculateConfidenceReliability([], "chart"),
+        "community-trend": calculateConfidenceReliability([], "community-trend"),
+      },
       regimePerformance: [regime()],
+      buyGatePerformance: calculateBuyGatePerformance([sample]),
+      scoringComparison: calculateScoringComparison([sample]),
+      orderFlowAttribution: calculateOrderFlowAttribution([sample]),
       dataQualityPerformance: calculateDataQualityPerformance([sample]),
       sourceQualityImpact: calculateSourceQualityImpact([sample]),
       sourceReasonImpact: calculateSourceReasonImpact([sample]),

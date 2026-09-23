@@ -140,6 +140,7 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
       contractSafety: safetyByAddress.get(normalizedAddress) ?? null,
       quotePreflight: preflightByAddress.get(normalizedAddress) ?? null,
       onchainPreflight: onchainByAddress.get(normalizedAddress) ?? null,
+      orderFlow: market?.orderFlow ?? null,
     };
     marketChecks.set(asset, marketSourceCheck(marketLookups.get(normalizedAddress)));
     return asset;
@@ -166,6 +167,7 @@ export async function getPortfolioSnapshot(): Promise<PortfolioSnapshot> {
     contractSafety: null,
     quotePreflight: null,
     onchainPreflight: null,
+    orderFlow: ethMarket?.orderFlow ?? null,
   };
   marketChecks.set(ethAsset, marketSourceCheck(marketLookups.get(WRAPPED_ETH_ADDRESS)));
   assets.push(ethAsset);

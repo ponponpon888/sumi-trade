@@ -19,6 +19,11 @@ const tokenSchema = z.object({
   symbol: z.string(),
 });
 
+const transactionCountSchema = z.object({
+  buys: z.number().nullable().optional(),
+  sells: z.number().nullable().optional(),
+}).optional();
+
 const pairSchema = z.object({
   chainId: z.string(),
   dexId: z.string(),
@@ -28,7 +33,14 @@ const pairSchema = z.object({
   quoteToken: tokenSchema,
   priceUsd: z.string().nullable().optional(),
   liquidity: z.object({ usd: z.number().nullable().optional() }).optional(),
-  volume: z.object({ h24: z.number().nullable().optional() }).optional(),
+  volume: z.object({
+    h1: z.number().nullable().optional(),
+    h24: z.number().nullable().optional(),
+  }).optional(),
+  txns: z.object({
+    h1: transactionCountSchema,
+    h6: transactionCountSchema,
+  }).partial().optional(),
   priceChange: z.object({ h24: z.number().nullable().optional() }).optional(),
 });
 
@@ -95,6 +107,13 @@ export async function getTokenMarket(
     liquidityUsd: pair.liquidity?.usd ?? 0,
     volume24hUsd: pair.volume?.h24 ?? 0,
     priceChange24h: pair.priceChange?.h24 ?? null,
+    orderFlow: {
+      buysH1: pair.txns?.h1?.buys ?? null,
+      sellsH1: pair.txns?.h1?.sells ?? null,
+      buysH6: pair.txns?.h6?.buys ?? null,
+      sellsH6: pair.txns?.h6?.sells ?? null,
+      volumeH1Usd: pair.volume?.h1 ?? null,
+    },
   };
 }
 
