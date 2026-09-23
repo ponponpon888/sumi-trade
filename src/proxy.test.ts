@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 
-import { proxy } from "@/proxy";
+import { config, proxy } from "@/proxy";
 
 const originalVercel = process.env.VERCEL;
 const originalUser = process.env.DASHBOARD_USER;
@@ -64,4 +64,18 @@ describe("production dashboard proxy", () => {
     });
     expect(proxy(request).status).toBe(200);
   });
+});
+
+describe("proxy matcher", () => {
+  const pattern = new RegExp(`^${config.matcher[0]}$`);
+
+  it.each(["/api/cron/scan", "/api/cron/base-cost", "/api/health"])(
+    "leaves %s to its own secret or public handler",
+    (path) => expect(pattern.test(path)).toBe(false),
+  );
+
+  it.each(["/", "/api/paper/base-quote", "/api/paper/export"])(
+    "keeps %s behind dashboard authentication",
+    (path) => expect(pattern.test(path)).toBe(true),
+  );
 });

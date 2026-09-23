@@ -78,6 +78,7 @@ Ethereumウォレットを読み取り、DEXの価格・流動性と5分足を�
 - 確信度をコスト後勝率へ換算し、walk-forwardの未使用期間で平均勝率より有意に当たるかを検証
 - 紙上シグナルを損切り・トレーリングストップ・利確ルールでも採点し、6時間固定・1/2/4時間保有と比較
 - シグナル時点のDEX売買フローを記録し、成績を分けるかを多重比較補正つきで検証（モデルには未接続）
+- Baseで500円相当の往復見積を1時間ごとに記録し、往復コストの分布をEthereum費用モデルと比較（署名・送信なし）
 
 ## 現在できないこと
 
@@ -181,6 +182,7 @@ The health checker also examines affected-source lists independently of summary 
 - Base paper preflight: [docs/base-paper-preflight.md](docs/base-paper-preflight.md)
 - Base funding planning: [docs/base-funding-planning.md](docs/base-funding-planning.md)
 - Base quote observation: [docs/base-quote-observation.md](docs/base-quote-observation.md)
+- Base cost observation: [docs/base-cost-observation.md](docs/base-cost-observation.md)
 - Base wallet observation: [docs/base-wallet-observation.md](docs/base-wallet-observation.md)
 - Base small-capital paper: [docs/base-small-capital-paper.md](docs/base-small-capital-paper.md)
 - CDP swap price findings: [docs/cdp-swap-price-findings.md](docs/cdp-swap-price-findings.md)

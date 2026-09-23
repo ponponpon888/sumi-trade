@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { PaperControls } from "@/app/_components/paper-controls";
 import { SafetyDecisionSummaryBoard } from "@/app/_components/safety-decision-summary-board";
+import type { BaseCostSummary } from "@/lib/base-cost-observation-core";
 import { formatAmount, formatUsd } from "@/lib/number";
 import { createSafetyDecisionSummaryView } from "@/lib/safety-decision-summary-view";
 import type {
@@ -1384,6 +1385,60 @@ function PerformanceLens({ journal }: { journal: PaperJournalSnapshot }) {
   );
 }
 
+function BaseCostBoard({ summary }: { summary: BaseCostSummary | null }) {
+  const labels = { 24: "24H", 168: "7D", 720: "30D" } as const;
+  const percent = (value: number | null) => (value === null ? "—" : `${value.toFixed(2)}%`);
+
+  return (
+    <div className="shell">
+      <section className="regime-performance-board" aria-label="Baseの往復見積コストの定期観測">
+        <div className="regime-performance-heading">
+          <div><span>BASE COST OBSERVATION</span><strong>Baseなら、往復でいくら目減りするか。</strong></div>
+          <small>
+            {summary?.lastObservedAt
+              ? `LAST ${summary.lastObservedAt.slice(0, 16).replace("T", " ")} UTC · 500 JPY ETH→USDC→ETH`
+              : "NO OBSERVATION YET · PAPER ONLY"}
+          </small>
+        </div>
+        <div className="regime-performance-grid">
+          {(summary?.windows ?? []).map((window) => (
+            <article
+              className={`regime-performance-${window.observedCount ? "monitoring" : "collecting"}`}
+              key={window.hours}
+            >
+              <div>
+                <span>{labels[window.hours]}</span>
+                <small>{window.observedCount}/{window.expectedObservations} HOURS</small>
+              </div>
+              <b>MEDIAN KNOWN COST</b>
+              <strong>{percent(window.medianCostPercent)}</strong>
+              <small>P90 {percent(window.p90CostPercent)} · MAX {percent(window.maxCostPercent)}</small>
+              <small>
+                AVAILABLE {window.availabilityPercent === null ? "—" : `${window.availabilityPercent.toFixed(0)}%`}
+                {" "}· +L1 {percent(window.medianProviderKnownCostPercent)}
+              </small>
+            </article>
+          ))}
+          <article className="regime-performance-monitoring">
+            <div>
+              <span>ETHEREUM MODEL</span>
+              <small>SAME 500 JPY · NOT OBSERVED</small>
+            </div>
+            <b>MODEL ROUND TRIP</b>
+            <strong>{percent(summary?.ethereumModelCostPercent ?? null)}</strong>
+            <small>チャートエンジンが使う固定ガス＋スリッページの推定</small>
+          </article>
+        </div>
+        <p>
+          1時間に1回、Baseで500円相当のETH→USDC→ETHを見積もり、往復の最低受取量の目減りとプロバイダーのガス推定を記録します。
+          L1掲載費はプロバイダーが報告した場合だけ「+L1」に加えます。署名・承認・送信は行わず、
+          Smart Accountや署名サービスの費用は含まないため、実際の総費用ではありません。
+        </p>
+      </section>
+    </div>
+  );
+}
+
 function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
   const progress = Math.min(
     100,
@@ -1756,6 +1811,7 @@ export function Dashboard({
   trendScout,
   safetyControl,
   dataSourceQuality,
+  baseCost = null,
 }: {
   snapshot: PortfolioSnapshot;
   chartModel: ChartModelSnapshot;
@@ -1764,6 +1820,7 @@ export function Dashboard({
   trendScout: TrendScoutSnapshot;
   safetyControl: SafetyControlSnapshot;
   dataSourceQuality: DataSourceQualitySnapshot;
+  baseCost?: BaseCostSummary | null;
 }) {
   const signals = new Map(plan.signals.map((signal) => [signal.symbol, signal]));
   const actionableSignals = plan.signals.filter((signal) =>
@@ -1862,6 +1919,8 @@ export function Dashboard({
       <TrendScoutBoard trendScout={trendScout} />
 
       <PaperJournalBoard journal={journal} />
+
+      <BaseCostBoard summary={baseCost} />
 
       <ModelDriftBoard drift={plan.modelDrift} />
 

@@ -1,16 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
-
+import { isCronAuthorized } from "@/lib/cron-auth";
 import { recordPaperScan } from "@/lib/paper-journal";
 import { getTradingDashboardData } from "@/lib/trading-engine";
 
 export const dynamic = "force-dynamic";
-
-function isAuthorized(request: Request, secret: string): boolean {
-  const supplied = Buffer.from(request.headers.get("authorization") ?? "");
-  const expected = Buffer.from(`Bearer ${secret}`);
-
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
-}
 
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -23,7 +15,7 @@ export async function GET(request: Request) {
     );
   }
 
-  if (!isAuthorized(request, secret)) {
+  if (!isCronAuthorized(request, secret)) {
     return Response.json(
       { ok: false, error: "Unauthorized" },
       { status: 401, headers: { "Cache-Control": "no-store" } },

@@ -304,3 +304,16 @@ v1.30より前の記録は`LEGACY`として分離し、保存済みレコード�
 結果はダッシュボードの`ORDER FLOW ATTRIBUTION`、研究用JSONの`orderFlowAttribution`、成果CSVの`buy_share_1h`・`buy_share_6h`・`volume_acceleration_1h`列に出力します。成果CSVは`net_return_4h_percent`の後ろに列が3つ増えます。
 
 BUY／SELL判定・安全ゲート・昇格条件・PAPER MODE・`executionLocked: true`は変更しません。
+
+## v1.34 Baseの往復コストを定期観測する
+
+Baseへ移す判断材料として、Base上で500円相当のETH→USDC→ETHを1時間に1回見積もり、往復コストの分布を30日分記録します。これまでの`/api/paper/base-quote`は手動の単発観測だけで、コストが時間帯や混雑でどれだけ変わるかは分かりませんでした。
+
+- 毎時17分のVercel Cron `/api/cron/base-cost`で`getBasePaperQuote(500)`を1回呼びます。外部GETは1日最大72回です。
+- 見積の前にRedisへその時間帯の予約を`SET NX`で書くため、Cronの再試行や重複起動でも1時間に2回は見積もりません。
+- 保存するのは費用の内訳と評価値だけです。失敗時は既知の安定コードだけを保存し、生のエラー文・URL・ルーター・ウォレットは保存しません。
+- ダッシュボードの`BASE COST OBSERVATION`に、24時間・7日・30日の中央値・90パーセンタイル・最大・成功率と、同じ500円に対するEthereum費用モデルの推定を並べます。
+- `/api/cron/scan`のCron認証を`src/lib/cron-auth.ts`へ移し、両方のCronで共有します。動作は同じです。
+- 新しいCronはダッシュボードのBasic認証の対象外にし、ルートで`CRON_SECRET`を確認します。
+
+詳細は`docs/base-cost-observation.md`を参照してください。署名・承認・送信・資金移動は行いません。BUY／SELL判定・安全ゲート・Base paper preflight・PAPER MODE・`executionLocked: true`は変更しません。

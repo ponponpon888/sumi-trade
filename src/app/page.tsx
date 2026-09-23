@@ -1,12 +1,25 @@
 import { Dashboard } from "@/app/_components/dashboard";
+import { getBaseCostSummary } from "@/lib/base-cost-observation";
 import { getTradingDashboardData } from "@/lib/trading-engine";
 
 export const dynamic = "force-dynamic";
 
+async function loadBaseCost() {
+  try {
+    return await getBaseCostSummary();
+  } catch {
+    // Observation storage is optional for the dashboard; never block it.
+    return null;
+  }
+}
+
 async function loadDashboardData() {
   try {
-    const data = await getTradingDashboardData();
-    return { ok: true as const, ...data };
+    const [data, baseCost] = await Promise.all([
+      getTradingDashboardData(),
+      loadBaseCost(),
+    ]);
+    return { ok: true as const, ...data, baseCost };
   } catch (error) {
     return {
       ok: false as const,
@@ -48,6 +61,7 @@ export default async function Home() {
       trendScout={result.trendScout}
       safetyControl={result.safetyControl}
       dataSourceQuality={result.dataSourceQuality}
+      baseCost={result.baseCost}
     />
   );
 }
