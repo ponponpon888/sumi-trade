@@ -5,7 +5,13 @@ export interface BarrierPlan {
   entryPriceUsd: number;
   stopLossPercent: number;
   takeProfitPercent: number;
-  trailingStopPercent: number;
+  /** Null disables the trailing stop. */
+  trailingStopPercent: number | null;
+  /**
+   * The trailing stop only arms once the best price has moved this far in the
+   * trade's favor. 0 (the default) arms it at entry, as the backtest does.
+   */
+  trailingActivationPercent?: number;
 }
 
 export interface BarrierPricePoint {
@@ -42,12 +48,17 @@ export function simulateBarrierExit(
   const hardStop = entry * (1 - (sign * plan.stopLossPercent) / 100);
   const takeProfit = entry * (1 + (sign * plan.takeProfitPercent) / 100);
   const favorable = (price: number) => sign * ((price - entry) / entry) * 100;
+  const activation = plan.trailingActivationPercent ?? 0;
   let best = entry;
 
   for (const point of path) {
     if (point.timeMs >= horizon.timeMs) break;
     best = sign > 0 ? Math.max(best, point.priceUsd) : Math.min(best, point.priceUsd);
-    const trailingStop = best * (1 - (sign * plan.trailingStopPercent) / 100);
+    const trailingArmed =
+      plan.trailingStopPercent !== null && favorable(best) >= activation;
+    const trailingStop = trailingArmed
+      ? best * (1 - (sign * plan.trailingStopPercent!) / 100)
+      : hardStop;
     const stop = sign > 0
       ? Math.max(hardStop, trailingStop)
       : Math.min(hardStop, trailingStop);

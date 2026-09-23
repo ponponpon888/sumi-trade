@@ -641,6 +641,16 @@ export interface PaperOrderFlowFeatures {
   volumeAccelerationH1: number | null;
 }
 
+export type PaperExitVariantId =
+  | "hard-stop-only"
+  | "trail-after-gain"
+  | "trail-at-stop-width";
+
+export interface PaperExitVariantOutcome {
+  exit: PaperBarrierExit;
+  netReturnPercent: number;
+}
+
 export type PaperBarrierExit =
   | "take-profit"
   | "stop-loss"
@@ -700,6 +710,8 @@ export interface PaperTradeOutcome extends PaperSignalObservation {
   won: boolean;
   entryDataQuality?: PaperDecisionDataQuality;
   barrier?: PaperBarrierOutcome;
+  /** Alternative exit rules replayed on the same price path and costs. */
+  exitVariants?: Partial<Record<PaperExitVariantId, PaperExitVariantOutcome>>;
   horizonNetReturnsPercent?: PaperHorizonNetReturns;
 }
 
@@ -965,14 +977,19 @@ export interface PaperChallengerResult {
   baselineAverageNetReturnPercent: number | null;
   keptAverageNetReturnPercent: number | null;
   excludedAverageNetReturnPercent: number | null;
-  /** Challenger net P/L minus baseline net P/L: minus the excluded signals' P/L. */
-  netPnlDifferenceUsd: number;
-  /** Interval of the excluded signals' mean net return, at the family confidence. */
-  excludedLowPercent: number | null;
-  excludedHighPercent: number | null;
+  keptIndependentSampleCount: number;
   /**
-   * challenger-better: the signals it skips lose money (interval below 0).
-   * challenger-worse: the signals it skips make money (interval above 0).
+   * Challenger net P/L minus baseline net P/L: minus the excluded signals' P/L.
+   * When the baseline loses after costs, trading less alone makes this
+   * positive, so it is shown for reference and never decides the status.
+   */
+  netPnlDifferenceUsd: number;
+  /** Interval of kept minus skipped mean net return, at the family confidence. */
+  differenceLowPercent: number | null;
+  differenceHighPercent: number | null;
+  /**
+   * challenger-better: the signals it keeps beat the ones it skips.
+   * challenger-worse: the signals it skips beat the ones it keeps.
    */
   status: "collecting" | "challenger-better" | "challenger-worse" | "no-difference";
 }
@@ -984,10 +1001,38 @@ export interface PaperChallengerResult {
  */
 export interface PaperChallengerComparison {
   familyConfidence: number;
-  minimumExcludedSamples: 10;
-  minimumExcludedIndependentSamples: 5;
-  minimumKeptSamples: 10;
+  /** Kept and skipped each need this many signals and scans. */
+  minimumSamplesPerGroup: 10;
+  minimumIndependentSamplesPerGroup: 5;
   challengers: PaperChallengerResult[];
+  researchOnly: true;
+}
+
+export interface PaperExitVariantResult {
+  id: PaperExitVariantId;
+  description: string;
+  registeredAt: string;
+  pairedCount: number;
+  independentSampleCount: number;
+  currentAverageNetReturnPercent: number | null;
+  variantAverageNetReturnPercent: number | null;
+  /** Interval of (variant − current exit rules) per signal, at the family confidence. */
+  differenceLowPercent: number | null;
+  differenceHighPercent: number | null;
+  exitMix: Record<PaperBarrierExit, number>;
+  status: "collecting" | "variant-better" | "variant-worse" | "no-difference";
+}
+
+/**
+ * Pre-registered alternative exit rules replayed on the recorded price paths
+ * of chart signals, against the current stop / trailing / take-profit rules.
+ * Research only: live exit rules are unchanged.
+ */
+export interface PaperExitVariantComparison {
+  familyConfidence: number;
+  minimumSamples: 20;
+  minimumIndependentSamples: 10;
+  variants: PaperExitVariantResult[];
   researchOnly: true;
 }
 
@@ -1094,6 +1139,7 @@ export interface PaperJournalSnapshot {
   scoringComparison: PaperScoringComparison;
   orderFlowAttribution: PaperOrderFlowAttribution;
   challengerComparison: PaperChallengerComparison;
+  exitVariantComparison: PaperExitVariantComparison;
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];

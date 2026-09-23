@@ -80,4 +80,24 @@ describe("simulateBarrierExit", () => {
     const late = [{ timeMs: HORIZON.timeMs, priceUsd: 150 }];
     expect(simulateBarrierExit(BUY, late, HORIZON).exit).toBe("horizon");
   });
+
+  it("ignores the trailing stop when it is disabled", () => {
+    const hardOnly = { ...BUY, trailingStopPercent: null };
+    expect(simulateBarrierExit(hardOnly, path(99, 97, 96.5), HORIZON).exit).toBe("horizon");
+    expect(simulateBarrierExit(hardOnly, path(99, 95), HORIZON)).toMatchObject({
+      exit: "stop-loss",
+      exitPriceUsd: 95,
+    });
+  });
+
+  it("arms the trailing stop only after the required favorable move", () => {
+    const armed = { ...BUY, trailingActivationPercent: 3 };
+    // 97 would hit a trailing stop armed at entry; here the hard stop (96) still rules.
+    expect(simulateBarrierExit(armed, path(99, 97), HORIZON).exit).toBe("horizon");
+    // After reaching 104 (+4%), the trailing stop sits at 100.88.
+    expect(simulateBarrierExit(armed, path(104, 100.5), HORIZON)).toMatchObject({
+      exit: "trailing-stop",
+      exitPriceUsd: 100.5,
+    });
+  });
 });

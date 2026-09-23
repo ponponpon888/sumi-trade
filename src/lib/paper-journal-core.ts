@@ -38,9 +38,13 @@ import {
   calculateDataSourceQualityHistory,
   DATA_SOURCE_QUALITY_DEFINITION,
 } from "@/lib/data-source-quality";
-import { simulateBarrierExit } from "@/lib/barrier-scoring";
+import { simulateBarrierExit, type BarrierPricePoint } from "@/lib/barrier-scoring";
 import { calculateChallengerComparison } from "@/lib/challengers";
 import { calculateConfidenceReliability } from "@/lib/confidence-reliability";
+import {
+  calculateExitVariantComparison,
+  EXIT_VARIANTS,
+} from "@/lib/exit-variants";
 import {
   clusteredDifferenceInterval,
   clusteredMeanInterval,
@@ -514,12 +518,13 @@ function settleSignal(
   };
 
   let barrier: PaperTradeOutcome["barrier"];
+  let exitVariants: PaperTradeOutcome["exitVariants"];
   if (
     finitePositive(signal.stopLossPercent) &&
     finitePositive(signal.takeProfitPercent) &&
     finitePositive(signal.trailingStopPercent)
   ) {
-    const path = [];
+    const path: BarrierPricePoint[] = [];
     for (
       let index = firstRecordIndexAtOrAfter(records, entryMs + 1);
       index < records.length &&
@@ -531,16 +536,23 @@ function settleSignal(
         path.push({ timeMs: records[index].bucketTimeMs, priceUsd: price });
       }
     }
-    const result = simulateBarrierExit(
-      {
-        direction: signal.direction,
-        entryPriceUsd: signal.entryPriceUsd,
-        stopLossPercent: signal.stopLossPercent,
-        takeProfitPercent: signal.takeProfitPercent,
-        trailingStopPercent: signal.trailingStopPercent,
-      },
-      path,
-      { timeMs: outcomeRecord.bucketTimeMs, priceUsd: exitPrice },
+    const plan = {
+      direction: signal.direction,
+      entryPriceUsd: signal.entryPriceUsd,
+      stopLossPercent: signal.stopLossPercent,
+      takeProfitPercent: signal.takeProfitPercent,
+      trailingStopPercent: signal.trailingStopPercent,
+    };
+    const horizon = { timeMs: outcomeRecord.bucketTimeMs, priceUsd: exitPrice };
+    const result = simulateBarrierExit(plan, path, horizon);
+    exitVariants = Object.fromEntries(
+      EXIT_VARIANTS.map((variant) => {
+        const variantResult = simulateBarrierExit(variant.adjust(plan), path, horizon);
+        return [variant.id, {
+          exit: variantResult.exit,
+          netReturnPercent: round(variantResult.grossReturnPercent - costPercent),
+        }];
+      }),
     );
     const barrierPnl = netPnl(result.grossReturnPercent);
     barrier = {
@@ -566,6 +578,7 @@ function settleSignal(
     netPnlUsd: round(netPnlUsd),
     won: netPnlUsd > 0,
     ...(barrier ? { barrier } : {}),
+    ...(exitVariants ? { exitVariants } : {}),
     horizonNetReturnsPercent: {
       h1: shortHorizon(1),
       h2: shortHorizon(2),
@@ -1695,6 +1708,7 @@ export function emptyPaperJournal(
     scoringComparison: calculateScoringComparison([]),
     orderFlowAttribution: calculateOrderFlowAttribution([]),
     challengerComparison: calculateChallengerComparison([]),
+    exitVariantComparison: calculateExitVariantComparison([]),
     assetPerformance: [],
     performanceTimeline: [],
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
@@ -1859,6 +1873,7 @@ export function evaluatePaperJournal(
     scoringComparison: calculateScoringComparison(analyticsOutcomes),
     orderFlowAttribution: calculateOrderFlowAttribution(analyticsOutcomes),
     challengerComparison: calculateChallengerComparison(analyticsOutcomes),
+    exitVariantComparison: calculateExitVariantComparison(analyticsOutcomes),
     assetPerformance: assetPerformance(
       analyticsOutcomes,
       analyticsStartingCapital,

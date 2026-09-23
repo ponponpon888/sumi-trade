@@ -272,6 +272,7 @@ export function buildPaperResearchJson(
     | "scoringComparison"
     | "orderFlowAttribution"
     | "challengerComparison"
+    | "exitVariantComparison"
     | "dataQualityPerformance"
     | "sourceQualityImpact"
     | "sourceReasonImpact"
@@ -295,6 +296,7 @@ export function buildPaperResearchJson(
         scoringComparison: "chart",
         orderFlowAttribution: "chart",
         challengerComparison: "chart",
+        exitVariantComparison: "chart",
         dataQualityPerformance: "chart",
         sourceQualityImpact: "chart",
         sourceReasonImpact: "chart",
@@ -309,6 +311,7 @@ export function buildPaperResearchJson(
       scoringComparison: journal.scoringComparison,
       orderFlowAttribution: journal.orderFlowAttribution,
       challengerComparison: journal.challengerComparison,
+      exitVariantComparison: journal.exitVariantComparison,
       dataQualityPerformance: journal.dataQualityPerformance,
       sourceQualityImpact: journal.sourceQualityImpact,
       sourceReasonImpact: journal.sourceReasonImpact,

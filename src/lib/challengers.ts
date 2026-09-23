@@ -1,4 +1,4 @@
-import { clusteredMeanInterval } from "@/lib/statistics";
+import { clusteredDifferenceInterval } from "@/lib/statistics";
 import type {
   PaperChallengerComparison,
   PaperChallengerId,
@@ -6,9 +6,8 @@ import type {
   PaperTradeOutcome,
 } from "@/lib/types";
 
-const MINIMUM_EXCLUDED_SAMPLES = 10 as const;
-const MINIMUM_EXCLUDED_INDEPENDENT_SAMPLES = 5 as const;
-const MINIMUM_KEPT_SAMPLES = 10 as const;
+const MINIMUM_SAMPLES_PER_GROUP = 10 as const;
+const MINIMUM_INDEPENDENT_SAMPLES_PER_GROUP = 5 as const;
 
 interface ChallengerDefinition {
   id: PaperChallengerId;
@@ -73,9 +72,10 @@ function average(outcomes: PaperTradeOutcome[]): number | null {
 }
 
 /**
- * A filter only changes results through the signals it skips, so each
- * challenger is judged by whether those skipped signals lost money after
- * costs. The interval is Bonferroni-widened across all challengers.
+ * A filter has skill only if the signals it keeps beat the ones it skips.
+ * Judging the skipped signals against zero is not enough: when every signal
+ * loses after costs, skipping any of them at random would look like an
+ * improvement. The interval is Bonferroni-widened across all challengers.
  */
 export function calculateChallengerComparison(
   outcomes: PaperTradeOutcome[],
@@ -92,19 +92,25 @@ export function calculateChallengerComparison(
     );
     const kept = baseline.filter(challenger.keeps);
     const excluded = baseline.filter((outcome) => !challenger.keeps(outcome));
-    const interval = clusteredMeanInterval(
-      excluded.map((outcome) => ({ key: outcome.signalTime, value: outcome.netReturnPercent })),
+    const toSample = (outcome: PaperTradeOutcome) => ({
+      key: outcome.signalTime,
+      value: outcome.netReturnPercent,
+    });
+    const interval = clusteredDifferenceInterval(
+      kept.map(toSample),
+      excluded.map(toSample),
       familyConfidence,
     );
     const samplePassed =
-      excluded.length >= MINIMUM_EXCLUDED_SAMPLES &&
-      interval.independentSampleCount >= MINIMUM_EXCLUDED_INDEPENDENT_SAMPLES &&
-      kept.length >= MINIMUM_KEPT_SAMPLES;
+      kept.length >= MINIMUM_SAMPLES_PER_GROUP &&
+      excluded.length >= MINIMUM_SAMPLES_PER_GROUP &&
+      interval.leftSampleCount >= MINIMUM_INDEPENDENT_SAMPLES_PER_GROUP &&
+      interval.rightSampleCount >= MINIMUM_INDEPENDENT_SAMPLES_PER_GROUP;
     const status: PaperChallengerResult["status"] = !samplePassed
       ? "collecting"
-      : interval.high !== null && interval.high < 0
+      : interval.low !== null && interval.low > 0
         ? "challenger-better"
-        : interval.low !== null && interval.low > 0
+        : interval.high !== null && interval.high < 0
           ? "challenger-worse"
           : "no-difference";
 
@@ -115,24 +121,24 @@ export function calculateChallengerComparison(
       baselineCount: baseline.length,
       keptCount: kept.length,
       excludedCount: excluded.length,
-      excludedIndependentSampleCount: interval.independentSampleCount,
+      excludedIndependentSampleCount: interval.rightSampleCount,
+      keptIndependentSampleCount: interval.leftSampleCount,
       baselineAverageNetReturnPercent: average(baseline),
       keptAverageNetReturnPercent: average(kept),
       excludedAverageNetReturnPercent: average(excluded),
       netPnlDifferenceUsd: round(
         -excluded.reduce((total, outcome) => total + outcome.netPnlUsd, 0),
       ),
-      excludedLowPercent: interval.low === null ? null : round(interval.low),
-      excludedHighPercent: interval.high === null ? null : round(interval.high),
+      differenceLowPercent: interval.low === null ? null : round(interval.low),
+      differenceHighPercent: interval.high === null ? null : round(interval.high),
       status,
     };
   });
 
   return {
     familyConfidence: round(familyConfidence, 4),
-    minimumExcludedSamples: MINIMUM_EXCLUDED_SAMPLES,
-    minimumExcludedIndependentSamples: MINIMUM_EXCLUDED_INDEPENDENT_SAMPLES,
-    minimumKeptSamples: MINIMUM_KEPT_SAMPLES,
+    minimumSamplesPerGroup: MINIMUM_SAMPLES_PER_GROUP,
+    minimumIndependentSamplesPerGroup: MINIMUM_INDEPENDENT_SAMPLES_PER_GROUP,
     challengers: results,
     researchOnly: true,
   };

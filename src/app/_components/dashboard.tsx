@@ -1161,22 +1161,87 @@ function ChallengerBoard({ journal }: { journal: PaperJournalSnapshot }) {
           >
             <div>
               <span>{challenger.id.toUpperCase()}</span>
-              <small>KEEP {challenger.keptCount} · SKIP {challenger.excludedCount}/{comparison.minimumExcludedSamples}</small>
+              <small>KEEP {challenger.keptCount} · SKIP {challenger.excludedCount} · MIN {comparison.minimumSamplesPerGroup} EACH</small>
             </div>
             <b>{challengerStatusLabels[challenger.status]}</b>
-            <strong className={challenger.netPnlDifferenceUsd < 0 ? "negative" : challenger.netPnlDifferenceUsd > 0 ? "positive" : ""}>
-              {challenger.baselineCount ? `${challenger.netPnlDifferenceUsd >= 0 ? "+" : "−"}$${Math.abs(challenger.netPnlDifferenceUsd).toFixed(2)}` : "—"}
+            <strong>
+              {challenger.keptAverageNetReturnPercent === null || challenger.excludedAverageNetReturnPercent === null
+                ? "—"
+                : signedPercent(challenger.keptAverageNetReturnPercent - challenger.excludedAverageNetReturnPercent)}
             </strong>
-            <small>SKIPPED AVG {challenger.excludedAverageNetReturnPercent === null ? "—" : signedPercent(challenger.excludedAverageNetReturnPercent)} · CI {formatInterval(challenger.excludedLowPercent, challenger.excludedHighPercent)}</small>
+            <small>KEEP − SKIP · CI {formatInterval(challenger.differenceLowPercent, challenger.differenceHighPercent)}</small>
+            <small>
+              KEEP {challenger.keptAverageNetReturnPercent === null ? "—" : signedPercent(challenger.keptAverageNetReturnPercent)}
+              {" · SKIP "}
+              {challenger.excludedAverageNetReturnPercent === null ? "—" : signedPercent(challenger.excludedAverageNetReturnPercent)}
+              {" · P/L "}
+              {challenger.baselineCount ? `${challenger.netPnlDifferenceUsd >= 0 ? "+" : "−"}$${Math.abs(challenger.netPnlDifferenceUsd).toFixed(2)}` : "—"}
+            </small>
             <small>{challenger.description}</small>
           </article>
         ))}
       </div>
       <p>
-        登録日以降のチャートシグナルだけで、各ルールが見送るシグナルのコスト控除後リターンを調べます。
-        見送ったシグナルが有意に負けていればルールの追加で改善、勝っていれば悪化です。
+        登録日以降のチャートシグナルだけで、各ルールが残すシグナルと見送るシグナルのコスト控除後リターンを比べます。
+        残す側が有意に上回ればルールに選別力があり、下回れば逆効果です。
+        全体がコスト負けしている間は、取引を減らすだけでP/Lは良く見えるため、P/Lの差は参考値として判定に使いません。
         {comparison.challengers.length}ルールをまとめて誤検出5%に抑えるため、区間は{(comparison.familyConfidence * 100).toFixed(2)}%で計算します。
         挑戦者で売買せず、本番モデルも自動では置き換えません。
+      </p>
+    </section>
+  );
+}
+
+const exitVariantStatusLabels = {
+  collecting: "COLLECTING",
+  "variant-better": "VARIANT BETTER",
+  "variant-worse": "VARIANT WORSE",
+  "no-difference": "NO DIFFERENCE",
+} as const;
+
+const exitVariantStatusClasses = {
+  collecting: "collecting",
+  "variant-better": "alert",
+  "variant-worse": "monitoring",
+  "no-difference": "monitoring",
+} as const;
+
+function ExitVariantBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const comparison = journal.exitVariantComparison;
+  return (
+    <section
+      className={`regime-performance-board${comparison.variants.some((item) => item.status === "variant-better") ? " regime-performance-has-alert" : ""}`}
+      aria-label="別の出口ルールを同じ値動きで再生した成績"
+    >
+      <div className="regime-performance-heading">
+        <div><span>EXIT RULE VARIANTS</span><strong>出口ルールを変えていたら、どうだったか。</strong></div>
+        <small>PRE-REGISTERED · SAME PRICE PATH · RESEARCH ONLY</small>
+      </div>
+      <div className="regime-performance-grid">
+        {comparison.variants.map((item) => (
+          <article className={`regime-performance-${exitVariantStatusClasses[item.status]}`} key={item.id}>
+            <div>
+              <span>{item.id.toUpperCase()}</span>
+              <small>{item.pairedCount}/{comparison.minimumSamples} PAIRED · {item.independentSampleCount} SCANS</small>
+            </div>
+            <b>{exitVariantStatusLabels[item.status]}</b>
+            <strong>
+              {item.variantAverageNetReturnPercent === null || item.currentAverageNetReturnPercent === null
+                ? "—"
+                : signedPercent(item.variantAverageNetReturnPercent - item.currentAverageNetReturnPercent)}
+            </strong>
+            <small>CI {formatInterval(item.differenceLowPercent, item.differenceHighPercent)}</small>
+            <small>
+              TP {item.exitMix["take-profit"]} · SL {item.exitMix["stop-loss"]} · TRAIL {item.exitMix["trailing-stop"]} · 6H {item.exitMix.horizon}
+            </small>
+            <small>{item.description}</small>
+          </article>
+        ))}
+      </div>
+      <p>
+        今の出口ルールでは、トレーリングストップが常に固定損切りより狭く、エントリー直後から有効なため、固定損切りは実質使われません。
+        記録済みの同じ値動きとコストで別の出口ルールを再生し、シグナルごとの差（別ルール − 今のルール）を比べます。
+        {comparison.variants.length}ルールをまとめて誤検出5%に抑えるため、区間は{(comparison.familyConfidence * 100).toFixed(2)}%で計算します。実際の出口ルールは変更しません。
       </p>
     </section>
   );
@@ -1593,6 +1658,7 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
       <RegimePerformanceBoard journal={journal} />
       <BuyGatePerformanceBoard journal={journal} />
       <ScoringComparisonBoard journal={journal} />
+      <ExitVariantBoard journal={journal} />
       <OrderFlowAttributionBoard journal={journal} />
       <ChallengerBoard journal={journal} />
 

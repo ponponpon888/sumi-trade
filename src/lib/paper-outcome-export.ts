@@ -48,6 +48,17 @@ const outcome = z.object({
     won: z.boolean(),
     pricePointCount: z.number(),
   }).optional(),
+  exitVariants: z.object(
+    Object.fromEntries(
+      ["hard-stop-only", "trail-after-gain", "trail-at-stop-width"].map((id) => [
+        id,
+        z.object({
+          exit: z.enum(["take-profit", "stop-loss", "trailing-stop", "horizon"]),
+          netReturnPercent: z.number(),
+        }).optional(),
+      ]),
+    ),
+  ).optional(),
   horizonNetReturnsPercent: z.object({
     h1: z.number().nullable(),
     h2: z.number().nullable(),

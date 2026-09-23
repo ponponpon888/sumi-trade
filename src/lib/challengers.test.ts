@@ -112,6 +112,17 @@ describe("calculateChallengerComparison", () => {
     });
   });
 
+  it("does not credit a filter just because every signal loses after costs", () => {
+    // Kept and skipped signals lose the same ~1% on average: skipping them cuts
+    // losses, but the filter has no skill.
+    const outcomes = Array.from({ length: 40 }, (_, index) =>
+      outcome(index, -1 + ((index * 7) % 5 - 2) * 0.3, { confidence: index % 2 ? 80 : 40 }));
+    const challenger = result(outcomes, "confidence-70-plus");
+    expect(challenger.excludedAverageNetReturnPercent!).toBeLessThan(0);
+    expect(challenger.netPnlDifferenceUsd).toBeGreaterThan(0);
+    expect(challenger.status).toBe("no-difference");
+  });
+
   it("needs enough kept and skipped signals before judging", () => {
     const outcomes = [
       ...Array.from({ length: 5 }, (_, index) => outcome(index, 1, { confidence: 80 })),

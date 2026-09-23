@@ -982,6 +982,12 @@ describe("exit-rule scoring", () => {
       pricePointCount: 71,
     });
     expect(outcome.horizonNetReturnsPercent).toEqual({ h1: -1, h2: -1, h4: -1, h6: -1 });
+    // Same path and costs under each registered alternative exit rule.
+    expect(outcome.exitVariants).toEqual({
+      "hard-stop-only": { exit: "take-profit", netReturnPercent: 7 },
+      "trail-after-gain": { exit: "take-profit", netReturnPercent: 7 },
+      "trail-at-stop-width": { exit: "take-profit", netReturnPercent: 7 },
+    });
   });
 
   it("leaves short horizons empty when no scan is close enough", () => {
