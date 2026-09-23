@@ -1270,6 +1270,13 @@ const buyGateStatusLabels = {
   inconclusive: "INCONCLUSIVE",
 } as const;
 
+const buyGateSelectivityLabels = {
+  collecting: "COLLECTING",
+  selective: "SELECTIVE",
+  "anti-selective": "ANTI-SELECTIVE",
+  "not-selective": "NOT SELECTIVE",
+} as const;
+
 const buyGateStatusClasses = {
   baseline: "monitoring",
   collecting: "collecting",
@@ -1317,11 +1324,18 @@ function BuyGatePerformanceBoard({ journal }: { journal: PaperJournalSnapshot })
               {" "}· {performance.independentSampleCount} SCANS
             </small>
             <small>WR {performance.maturedCount ? `${performance.winRate.toFixed(0)}%` : "—"} · PF {performance.profitFactor === null ? "—" : performance.profitFactor.toFixed(2)}</small>
+            {performance.selectivity ? (
+              <small>
+                VS PASSED {buyGateSelectivityLabels[performance.selectivity]} · CI {formatInterval(performance.passedMinusBlockedLowPercent, performance.passedMinusBlockedHighPercent)}
+              </small>
+            ) : null}
             <small>{performance.reasons[0]}</small>
           </article>
         ))}
       </div>
       <p>
+        「VS PASSED」は、全判定を通過したBUYと比べて、その判定が止めたBUYの方が悪いか（選別力）を示します。
+        全体がコスト負けしている間はどの判定も損失回避に見えるため、判定の良し悪しはこちらで読みます。
         見送ったBUYも、買っていた場合の6時間後コスト控除後リターンで採点します。
         各判定は「その判定だけが止めたBUY」で評価し、同じスキャンのBUYは1標本として95%区間を計算します。
         単独10件・5スキャン以上で、区間全体が0の片側にある場合だけ結論を出します。分析表示のみで、判定条件を自動変更しません。

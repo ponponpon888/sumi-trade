@@ -923,6 +923,37 @@ describe("buy gate counterfactuals", () => {
     });
   });
 
+  it("does not call a gate selective when blocked and passed BUYs lose alike", () => {
+    // Every BUY loses ~2% after costs: the gate is "protective" but not selective.
+    const noise = (index: number) => -2 + ((index * 7) % 5 - 2) * 0.1;
+    const rows = calculateBuyGatePerformance([
+      ...Array.from({ length: 12 }, (_, index) => gateOutcome(index, noise(index), { buyGate: "passed" })),
+      ...Array.from({ length: 12 }, (_, index) => gateOutcome(20 + index, noise(index), { buyGateFailures: ["cost-gate"] })),
+    ]);
+    expect(rows.find((row) => row.gate === "passed")?.selectivity).toBeNull();
+    expect(rows.find((row) => row.gate === "cost-gate")).toMatchObject({
+      status: "protective",
+      selectivity: "not-selective",
+    });
+  });
+
+  it("calls a gate selective when its blocked BUYs do worse than passed ones", () => {
+    const rows = calculateBuyGatePerformance([
+      ...Array.from({ length: 12 }, (_, index) => gateOutcome(index, 1 + (index % 3) * 0.1, { buyGate: "passed" })),
+      ...Array.from({ length: 12 }, (_, index) => gateOutcome(20 + index, -2 - (index % 3) * 0.1, { buyGateFailures: ["cost-gate"] })),
+    ]);
+    const row = rows.find((item) => item.gate === "cost-gate")!;
+    expect(row.selectivity).toBe("selective");
+    expect(row.passedMinusBlockedLowPercent!).toBeGreaterThan(0);
+  });
+
+  it("waits for passed BUYs before judging selectivity", () => {
+    const rows = calculateBuyGatePerformance(
+      Array.from({ length: 12 }, (_, index) => gateOutcome(index, -2, { buyGateFailures: ["cost-gate"] })),
+    );
+    expect(rows.find((row) => row.gate === "cost-gate")?.selectivity).toBe("collecting");
+  });
+
   it("uses the recorded gate alone when all filters passed but the budget stopped the BUY", () => {
     const rows = calculateBuyGatePerformance([
       gateOutcome(0, 1, { buyGate: "budget", buyGateFailures: [] }),

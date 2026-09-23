@@ -1278,6 +1278,17 @@ export function calculateBuyGatePerformance(
       (outcome) => signalModel(outcome) === "chart" && outcome.direction === "BUY",
     )
     .map((outcome) => ({ outcome, blockers: outcomeBuyBlockers(outcome) }));
+  const toSample = (outcome: PaperTradeOutcome) => ({
+    key: outcome.signalTime,
+    value: outcome.netReturnPercent,
+  });
+  const passedSamples = buys
+    .filter((item) => item.blockers?.length === 0)
+    .map((item) => toSample(item.outcome));
+  const soleBlockedGates = new Set(
+    buys.flatMap((item) => (item.blockers?.length === 1 ? item.blockers : [])),
+  );
+  const selectivityConfidence = 1 - 0.05 / Math.max(1, soleBlockedGates.size);
 
   return BUY_GATE_ORDER.flatMap((gate) => {
     const matches = (blockers: BuyGateId[] | null) =>
@@ -1329,6 +1340,30 @@ export function calculateBuyGatePerformance(
             ? ["95%区間全体がプラスです。この判定が勝てるBUYを止めている可能性があります。"]
             : ["95%区間が0をまたいでおり、判定の効果はまだ断定できません。"];
 
+    const comparable = gate !== "passed" && gate !== "unknown";
+    const selectivityInterval = comparable
+      ? clusteredDifferenceInterval(
+        passedSamples,
+        scoped.map(toSample),
+        selectivityConfidence,
+      )
+      : null;
+    const selectivityReady =
+      selectivityInterval !== null &&
+      passedSamples.length >= MINIMUM_BUY_GATE_SAMPLES &&
+      scoped.length >= MINIMUM_BUY_GATE_SAMPLES &&
+      selectivityInterval.leftSampleCount >= MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES &&
+      selectivityInterval.rightSampleCount >= MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES;
+    const selectivity: PaperBuyGatePerformance["selectivity"] = !comparable
+      ? null
+      : !selectivityReady
+        ? "collecting"
+        : selectivityInterval.low !== null && selectivityInterval.low > 0
+          ? "selective"
+          : selectivityInterval.high !== null && selectivityInterval.high < 0
+            ? "anti-selective"
+            : "not-selective";
+
     return [{
       gate,
       blockedCount: blocked.length,
@@ -1343,6 +1378,11 @@ export function calculateBuyGatePerformance(
       minimumSamples: MINIMUM_BUY_GATE_SAMPLES,
       minimumIndependentSamples: MINIMUM_BUY_GATE_INDEPENDENT_SAMPLES,
       status,
+      selectivity,
+      passedMinusBlockedLowPercent:
+        selectivityInterval?.low == null ? null : round(selectivityInterval.low),
+      passedMinusBlockedHighPercent:
+        selectivityInterval?.high == null ? null : round(selectivityInterval.high),
       reasons,
       researchOnly: true,
     }];

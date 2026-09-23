@@ -1060,6 +1060,16 @@ export interface PaperBuyGatePerformance {
    * inconclusive: the interval still contains 0.
    */
   status: "baseline" | "collecting" | "protective" | "missed-profit" | "inconclusive";
+  /**
+   * Whether the gate picks out worse BUYs than those that passed every gate.
+   * "protective" only says the blocked BUYs lost; while every BUY loses after
+   * costs, any gate looks protective. selective: passed minus blocked is above
+   * zero; anti-selective: below zero. Null on the baseline row.
+   */
+  selectivity: "collecting" | "selective" | "anti-selective" | "not-selective" | null;
+  /** Interval of passed minus blocked mean net return, Bonferroni over the gates shown. */
+  passedMinusBlockedLowPercent: number | null;
+  passedMinusBlockedHighPercent: number | null;
   reasons: string[];
   researchOnly: true;
 }
