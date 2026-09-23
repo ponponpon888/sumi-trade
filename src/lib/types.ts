@@ -947,6 +947,50 @@ export interface PaperOrderFlowAttribution {
   researchOnly: true;
 }
 
+export type PaperChallengerId =
+  | "flow-aligned-only"
+  | "skip-flow-opposed"
+  | "confidence-70-plus";
+
+export interface PaperChallengerResult {
+  id: PaperChallengerId;
+  description: string;
+  /** Only chart signals at or after this time are scored for this challenger. */
+  registeredAt: string;
+  /** Chart signals after registration that carry the data the rule reads. */
+  baselineCount: number;
+  keptCount: number;
+  excludedCount: number;
+  excludedIndependentSampleCount: number;
+  baselineAverageNetReturnPercent: number | null;
+  keptAverageNetReturnPercent: number | null;
+  excludedAverageNetReturnPercent: number | null;
+  /** Challenger net P/L minus baseline net P/L: minus the excluded signals' P/L. */
+  netPnlDifferenceUsd: number;
+  /** Interval of the excluded signals' mean net return, at the family confidence. */
+  excludedLowPercent: number | null;
+  excludedHighPercent: number | null;
+  /**
+   * challenger-better: the signals it skips lose money (interval below 0).
+   * challenger-worse: the signals it skips make money (interval above 0).
+   */
+  status: "collecting" | "challenger-better" | "challenger-worse" | "no-difference";
+}
+
+/**
+ * Pre-registered filters over the live chart signals, scored only on signals
+ * recorded after each filter's registration. Research only: nothing trades on
+ * a challenger and none replaces the chart model automatically.
+ */
+export interface PaperChallengerComparison {
+  familyConfidence: number;
+  minimumExcludedSamples: 10;
+  minimumExcludedIndependentSamples: 5;
+  minimumKeptSamples: 10;
+  challengers: PaperChallengerResult[];
+  researchOnly: true;
+}
+
 export interface PaperBuyGatePerformance {
   gate: BuyGateId | "unknown";
   /** BUYs this gate failed, alone or together with other gates. */
@@ -1049,6 +1093,7 @@ export interface PaperJournalSnapshot {
   buyGatePerformance: PaperBuyGatePerformance[];
   scoringComparison: PaperScoringComparison;
   orderFlowAttribution: PaperOrderFlowAttribution;
+  challengerComparison: PaperChallengerComparison;
   assetPerformance: PaperAssetPerformance[];
   performanceTimeline: PaperPerformanceTimelinePoint[];
   dataSourceQualityHistory24h: DataSourceQualityHistoryItem[];

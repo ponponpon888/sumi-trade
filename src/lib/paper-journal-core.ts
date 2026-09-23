@@ -39,6 +39,7 @@ import {
   DATA_SOURCE_QUALITY_DEFINITION,
 } from "@/lib/data-source-quality";
 import { simulateBarrierExit } from "@/lib/barrier-scoring";
+import { calculateChallengerComparison } from "@/lib/challengers";
 import { calculateConfidenceReliability } from "@/lib/confidence-reliability";
 import {
   clusteredDifferenceInterval,
@@ -1693,6 +1694,7 @@ export function emptyPaperJournal(
     buyGatePerformance: calculateBuyGatePerformance([]),
     scoringComparison: calculateScoringComparison([]),
     orderFlowAttribution: calculateOrderFlowAttribution([]),
+    challengerComparison: calculateChallengerComparison([]),
     assetPerformance: [],
     performanceTimeline: [],
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory([]),
@@ -1856,6 +1858,7 @@ export function evaluatePaperJournal(
     buyGatePerformance: calculateBuyGatePerformance(analyticsOutcomes),
     scoringComparison: calculateScoringComparison(analyticsOutcomes),
     orderFlowAttribution: calculateOrderFlowAttribution(analyticsOutcomes),
+    challengerComparison: calculateChallengerComparison(analyticsOutcomes),
     assetPerformance: assetPerformance(
       analyticsOutcomes,
       analyticsStartingCapital,

@@ -1131,6 +1131,57 @@ function OrderFlowAttributionBoard({ journal }: { journal: PaperJournalSnapshot 
   );
 }
 
+const challengerStatusLabels = {
+  collecting: "COLLECTING",
+  "challenger-better": "CHALLENGER BETTER",
+  "challenger-worse": "CHALLENGER WORSE",
+  "no-difference": "NO DIFFERENCE",
+} as const;
+
+const challengerStatusClasses = {
+  collecting: "collecting",
+  "challenger-better": "monitoring",
+  "challenger-worse": "alert",
+  "no-difference": "monitoring",
+} as const;
+
+function ChallengerBoard({ journal }: { journal: PaperJournalSnapshot }) {
+  const comparison = journal.challengerComparison;
+  return (
+    <section className="regime-performance-board" aria-label="事前登録した挑戦者ルールの影の成績">
+      <div className="regime-performance-heading">
+        <div><span>SHADOW CHALLENGERS</span><strong>このルールを足したら、良くなっていたか。</strong></div>
+        <small>PRE-REGISTERED · 30D · RESEARCH ONLY</small>
+      </div>
+      <div className="regime-performance-grid">
+        {comparison.challengers.map((challenger) => (
+          <article
+            className={`regime-performance-${challengerStatusClasses[challenger.status]}`}
+            key={challenger.id}
+          >
+            <div>
+              <span>{challenger.id.toUpperCase()}</span>
+              <small>KEEP {challenger.keptCount} · SKIP {challenger.excludedCount}/{comparison.minimumExcludedSamples}</small>
+            </div>
+            <b>{challengerStatusLabels[challenger.status]}</b>
+            <strong className={challenger.netPnlDifferenceUsd < 0 ? "negative" : challenger.netPnlDifferenceUsd > 0 ? "positive" : ""}>
+              {challenger.baselineCount ? `${challenger.netPnlDifferenceUsd >= 0 ? "+" : "−"}$${Math.abs(challenger.netPnlDifferenceUsd).toFixed(2)}` : "—"}
+            </strong>
+            <small>SKIPPED AVG {challenger.excludedAverageNetReturnPercent === null ? "—" : signedPercent(challenger.excludedAverageNetReturnPercent)} · CI {formatInterval(challenger.excludedLowPercent, challenger.excludedHighPercent)}</small>
+            <small>{challenger.description}</small>
+          </article>
+        ))}
+      </div>
+      <p>
+        登録日以降のチャートシグナルだけで、各ルールが見送るシグナルのコスト控除後リターンを調べます。
+        見送ったシグナルが有意に負けていればルールの追加で改善、勝っていれば悪化です。
+        {comparison.challengers.length}ルールをまとめて誤検出5%に抑えるため、区間は{(comparison.familyConfidence * 100).toFixed(2)}%で計算します。
+        挑戦者で売買せず、本番モデルも自動では置き換えません。
+      </p>
+    </section>
+  );
+}
+
 const buyGateLabels = {
   passed: "PASSED",
   "not-tradable": "NOT TRADABLE",
@@ -1543,6 +1594,7 @@ function PaperJournalBoard({ journal }: { journal: PaperJournalSnapshot }) {
       <BuyGatePerformanceBoard journal={journal} />
       <ScoringComparisonBoard journal={journal} />
       <OrderFlowAttributionBoard journal={journal} />
+      <ChallengerBoard journal={journal} />
 
       <PerformanceLens journal={journal} />
 

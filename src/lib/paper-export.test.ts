@@ -12,6 +12,7 @@ import {
   paperResearchExportFilename,
   parsePaperExportRequest,
 } from "@/lib/paper-export";
+import { calculateChallengerComparison } from "@/lib/challengers";
 import { calculateConfidenceReliability } from "@/lib/confidence-reliability";
 import { calculateBuyGatePerformance, calculateOrderFlowAttribution, calculateScoringComparison, calculateDataQualityPerformance, calculateSourceQualityImpact, calculateSourceReasonImpact } from "@/lib/paper-journal-core";
 import type {
@@ -171,6 +172,7 @@ describe("paper research export", () => {
         buyGatePerformance: calculateBuyGatePerformance([outcome()]),
         scoringComparison: calculateScoringComparison([outcome()]),
         orderFlowAttribution: calculateOrderFlowAttribution([outcome()]),
+        challengerComparison: calculateChallengerComparison([outcome()]),
         dataQualityPerformance: calculateDataQualityPerformance([outcome()]),
         sourceQualityImpact: calculateSourceQualityImpact([outcome()]),
         sourceReasonImpact: calculateSourceReasonImpact([outcome()]),
@@ -197,6 +199,8 @@ describe("paper research export", () => {
     expect(parsed.modelScope.buyGatePerformance).toBe("chart");
     expect(parsed.scoringComparison).toEqual(calculateScoringComparison([outcome()]));
     expect(parsed.orderFlowAttribution.rows).toHaveLength(6);
+    expect(parsed.modelScope.challengerComparison).toBe("chart");
+    expect(parsed.challengerComparison.researchOnly).toBe(true);
     expect(parsed.confidenceReliabilityByModel.chart).toMatchObject({
       status: "collecting",
       method: "platt-walk-forward",
@@ -223,6 +227,7 @@ describe("paper research export", () => {
       buyGatePerformance: calculateBuyGatePerformance([sample]),
       scoringComparison: calculateScoringComparison([sample]),
       orderFlowAttribution: calculateOrderFlowAttribution([sample]),
+      challengerComparison: calculateChallengerComparison([sample]),
       dataQualityPerformance: calculateDataQualityPerformance([sample]),
       sourceQualityImpact: calculateSourceQualityImpact([sample]),
       sourceReasonImpact: calculateSourceReasonImpact([sample]),

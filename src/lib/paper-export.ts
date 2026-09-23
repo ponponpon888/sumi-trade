@@ -271,6 +271,7 @@ export function buildPaperResearchJson(
     | "buyGatePerformance"
     | "scoringComparison"
     | "orderFlowAttribution"
+    | "challengerComparison"
     | "dataQualityPerformance"
     | "sourceQualityImpact"
     | "sourceReasonImpact"
@@ -293,6 +294,7 @@ export function buildPaperResearchJson(
         buyGatePerformance: "chart",
         scoringComparison: "chart",
         orderFlowAttribution: "chart",
+        challengerComparison: "chart",
         dataQualityPerformance: "chart",
         sourceQualityImpact: "chart",
         sourceReasonImpact: "chart",
@@ -306,6 +308,7 @@ export function buildPaperResearchJson(
       buyGatePerformance: journal.buyGatePerformance,
       scoringComparison: journal.scoringComparison,
       orderFlowAttribution: journal.orderFlowAttribution,
+      challengerComparison: journal.challengerComparison,
       dataQualityPerformance: journal.dataQualityPerformance,
       sourceQualityImpact: journal.sourceQualityImpact,
       sourceReasonImpact: journal.sourceReasonImpact,
