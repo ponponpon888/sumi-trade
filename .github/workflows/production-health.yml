@@ -1,11 +1,8 @@
 name: Production health
 
 on:
+  # Intentionally paused on 2026-10-09; manual audits remain available.
   workflow_dispatch:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '0 */6 * * *'
 
 permissions:
   contents: read

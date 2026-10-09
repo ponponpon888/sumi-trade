@@ -1,16 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "env": {
-    "WALLET_ADDRESS": "0x00000000000000000000000000000000000000d1"
+    "WALLET_ADDRESS": "0x00000000000000000000000000000000000000d1",
+    "SUMI_EMERGENCY_STOP": "true"
   },
-  "crons": [
-    {
-      "path": "/api/cron/scan",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/base-cost",
-      "schedule": "17 * * * *"
-    }
-  ]
+  "crons": []
 }
