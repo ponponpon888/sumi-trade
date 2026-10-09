@@ -1,5 +1,21 @@
 # SUMI Trade Lab: production health investigation and temporary pause
 
+## 確定結果 — 2026-10-09 16:22 JST
+
+この節は、以下の初期調査で未確定だった保存先の原因と接続状況を更新します。
+
+- **根本原因：Upstash RedisのFixedプラン制限到達。** Vercel Productionの `KV_REST_API_URL` と `KV_REST_API_TOKEN` を使った、認証付きの読み取り専用 `PING` がHTTP 403になりました。返却されたエラーは以下です。制限の種類（容量・通信量等）と具体的な使用量までは、この応答では分かりません。
+  > ERR This database has reached current Fixed plan limits. Please upgrade manually or enable auto upgrade on Upstash Console
+- この保存先が安全状態と紙上履歴の共通依存先です。リクエスト拒否により `SAFETY_UNAVAILABLE` と `PAPER_ENGINE_NOT_LIVE` になることが、既存コードの失敗経路と一致します。5取得元のcollecting/0件は、読み取りエラー時に作られる代替集計です。
+- **Vercelは接続済みで再接続は不要でした。** 接続ユーザーは `ponponpon888`。同一プロジェクトをIDで指定し、teamIdを省略したプロジェクト・デプロイ・環境変数取得は成功しました。チームを明示した呼び出しとログ取得は引き続き403です。Vercel側403とRedis側403は別の拒否です。
+- 停止PR #69のコミット `ee6072820b94572edb7cc38b132c0f05fb7b5428` が、Productionデプロイ `dpl_2TVBLR93iGwqyoSD2ZExjiaMw9ND` でREADYになり、本番ドメインに割り当てられていることを確認しました。このコミットは `crons: []` と `SUMI_EMERGENCY_STOP=true` を含みます。
+- 16:21 JSTの公開healthは `mode: paper`、`executionLocked: true`、`safetyStatus: stopped`、`emergencyStop: true`。紙上エンジンは依然errorで、保存先の復旧は主張しません。
+- Vercelの公式仕様では、Cron設定削除後の再デプロイでCronが削除されます： https://vercel.com/docs/cron-jobs/manage-cron-jobs 。該当する本番デプロイの成功を確認済みです。ダッシュボード上のCron一覧自体は、現在の接続では独立に取得できていません。
+- プラン変更、自動アップグレードの有効化、トークン変更、スキャン再実行、実取引切り替えは行っていません。ユーザーの一時停止方針を維持します。
+- 再開する場合の適用先は、**Upstash Consoleの当該Redisデータベースの使用量・Fixedプラン上限設定**です。まず制限種類と使用量を確認し、必要な容量・通信量対策を判断します。再開・有料設定変更は今回の作業には含めません。現時点の直接応答は認証失敗を示していないため、VercelのURL/トークンを推測で交換する必要はありません。
+- 別件のCI lockfile欠落はPR #70で修正済み（未マージ）。GitHubでlint・型チェック・1077テスト・本番ビルドが成功し、停止設定も維持されています。
+
+
 Checked on 2026-10-09 (Asia/Tokyo). User authorized a temporary stop. No live trading is authorized.
 
 ## Confirmed evidence
