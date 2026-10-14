@@ -73,6 +73,56 @@ v1.3のオンチェーン状態プリフライトは `eth_chainId`、`eth_getBlo
 
 本番監視スクリプトの回帰テストと本番health監視は別のワークフローとして継続します。このCIの追加だけでは、GitHubのマージ必須チェック設定は変更されません。
 
+## デプロイ
+
+本番はGitHub連携ではなく、手動デプロイです。mainへマージしても本番は変わりません。
+
+```powershell
+vercel --prod
+```
+
+Vercelのプロジェクト名は `sumi-trade-lab` で、本番URLは `https://sumi-trade-lab.vercel.app` です。リポジトリ名（`sumi-trade`）とは一致していません。
+
+### Install Commandは`npm install`
+
+VercelのInstall Commandは `npm ci` ではなく `npm install` です。この違いは、lockfileに不整合があるときに現れます。`npm ci` は `package.json` とlockfileの不一致を拒否して止まりますが、`npm install` はlockfileを解決し直して進みます。そのため、**GitHubのCIが落ちていても本番ビルドは通ります**。CIと本番は別々に動いていると考えてください。CIが緑であることは、本番に出ていることを意味しません。
+
+### 本番が古いままかを確認する
+
+`/api/health` の `buildVersion` は `package.json` の `version` から取得しています。両者を比べれば、本番に出ているコードが手元と同じかが分かります。
+
+```powershell
+$pair = "sumi:$env:DASHBOARD_PASSWORD"
+$basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pair))
+Invoke-RestMethod -Uri https://sumi-trade-lab.vercel.app/api/health -Headers @{ Authorization = "Basic $basic" }
+```
+
+ユーザー名は `DASHBOARD_USER` の値で、未設定なら `sumi` です。
+
+`buildVersion` 以下の詳細はBasic認証が通ったときだけ返ります。認証なしのときは `ok`・`service`・`mode` の3項目だけで、ビルドの新旧は分かりません。`scripts/check-production-health.mjs` は認証を送らないため、現状この比較には使えません。
+
+### 紙上エンジンの緊急停止
+
+新規BUYの停止手段は2つあり、環境変数が先に評価されます。
+
+| 手段 | 保存先 | 再デプロイ | 解除 |
+| --- | --- | --- | --- |
+| 永続フラグ | Upstash Redis（`sumi:safety:v1:emergency-stop`） | 不要 | `enabled: false` をPOST |
+| 環境変数 | Vercelの `SUMI_EMERGENCY_STOP` | 必要 | 値を変更して再デプロイ |
+
+永続フラグは `POST /api/safety/emergency-stop` で切り替えます。`Authorization: Bearer $SAFETY_CONTROL_SECRET`（16文字以上）と、`enabled`（真偽値）・`reason`（3〜160文字）のJSONが必要です。このルートは `proxy.ts` のmatcherから除外されていて、Basic認証ではなくBearer secretで守っています。
+
+```powershell
+$body = @{ enabled = $true; reason = "manual stop" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri https://sumi-trade-lab.vercel.app/api/safety/emergency-stop `
+  -Headers @{ Authorization = "Bearer $env:SAFETY_CONTROL_SECRET" } `
+  -ContentType "application/json" -Body $body
+```
+
+Upstashに保存するため、デプロイを跨いで残ります。状態は `/api/health` の `emergencyStop` と `safetyStatus` に出ます（Basic認証が必要）。`SAFETY_CONTROL_SECRET` が未設定または16文字未満のときは、このAPIは503で閉じます。
+
+Upstashを読めないとき、`SUMI_EMERGENCY_STOP` が不正な値のときは、どちらも `safetyStatus: "unavailable"` と `emergencyStop: true` になり、新規BUYは停止側へ倒れます。停止の失敗を無視して動き続けることはありません。
+
 ## 実売買接続前の必須条件
 
 1. ペーパートレードのシグナルと約定想定を最低7日・30件保存する
