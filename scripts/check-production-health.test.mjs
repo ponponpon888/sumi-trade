@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -20,12 +20,19 @@ const emptyCheckSets = {
   failureBreakdown: { rateLimited: 0, timeout: 0, httpError: 0, parseError: 0, other: 0 },
 };
 const preload = `
+import { writeFileSync } from "node:fs";
 const fixture = JSON.parse(process.env.SUMI_HEALTH_TEST_FIXTURE);
-globalThis.fetch = async () => ({
-  ok: fixture.httpStatus === 200,
-  status: fixture.httpStatus,
-  json: async () => fixture.body,
-});
+const callLog = process.env.SUMI_HEALTH_TEST_CALLS;
+const calls = [];
+globalThis.fetch = async (url, init) => {
+  calls.push({ url: String(url), authorization: init?.headers?.authorization ?? null });
+  if (callLog) writeFileSync(callLog, JSON.stringify(calls));
+  return {
+    ok: fixture.httpStatus === 200,
+    status: fixture.httpStatus,
+    json: async () => fixture.body,
+  };
+};
 globalThis.setTimeout = (callback) => { queueMicrotask(callback); return 0; };
 `;
 
@@ -87,6 +94,8 @@ for (const [name, patch, expected, httpStatus = 200, expectedConfigurationIssues
       encoding: "utf8", timeout: 5000,
       env: {
         ...process.env,
+        DASHBOARD_USER: "owner",
+        DASHBOARD_PASSWORD: "correct-horse",
         SUMI_HEALTH_REPORT_PATH: reportPath,
         SUMI_HEALTH_TEST_FIXTURE: JSON.stringify({
           body: patch === null ? null : { ...valid, ...patch }, httpStatus,
@@ -145,3 +154,102 @@ for (const [name, patch, expected, httpStatus = 200, expectedConfigurationIssues
     }
   });
 }
+
+/**
+ * PR #3 で /api/health の詳細が認証ありに移った。認証なしの応答は ok・service・mode の
+ * 3項目だけなので、buildVersion の一致を待つリトライでは永久に埋まらない。認証あり・
+ * なし・未設定の3通りを、送ったヘッダーとリクエスト回数まで含めて検査する。
+ */
+const basic = (user, password) => `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+const authenticatedBody = { ok: true, service: "sumi-trade-lab", ...valid };
+const livenessOnlyBody = { ok: true, service: "sumi-trade-lab", mode: "paper" };
+
+function runMonitor({ body, httpStatus = 200, credentials }) {
+  const reportDirectory = mkdtempSync(join(tmpdir(), "sumi-health-auth-"));
+  const reportPath = join(reportDirectory, "report.json");
+  const callPath = join(reportDirectory, "calls.json");
+  const env = {
+    ...process.env,
+    SUMI_HEALTH_REPORT_PATH: reportPath,
+    SUMI_HEALTH_TEST_CALLS: callPath,
+    SUMI_HEALTH_TEST_FIXTURE: JSON.stringify({ body, httpStatus }),
+  };
+  delete env.DASHBOARD_USER;
+  delete env.DASHBOARD_PASSWORD;
+  Object.assign(env, credentials ?? {});
+  const result = spawnSync(process.execPath, [
+    "--import", "data:text/javascript," + encodeURIComponent(preload),
+    fileURLToPath(new URL("./check-production-health.mjs", import.meta.url)),
+  ], { encoding: "utf8", timeout: 5000, env });
+  try {
+    assert.ifError(result.error);
+    return {
+      result,
+      report: JSON.parse(readFileSync(reportPath, "utf8")),
+      calls: existsSync(callPath) ? JSON.parse(readFileSync(callPath, "utf8")) : [],
+      output: result.stdout + result.stderr,
+    };
+  } finally {
+    rmSync(reportDirectory, { recursive: true, force: true });
+  }
+}
+
+test("authenticated: sends Basic credentials and audits the detail", () => {
+  const { result, report, calls, output } = runMonitor({
+    body: authenticatedBody,
+    credentials: { DASHBOARD_USER: "owner", DASHBOARD_PASSWORD: "correct-horse" },
+  });
+  assert.equal(result.status, 0, output);
+  assert.equal(report.status, "pass");
+  assert.deepEqual(report.failures, []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].authorization, basic("owner", "correct-horse"));
+  // パスワードを報告や出力へ写さない
+  assert.ok(!JSON.stringify(report).includes("correct-horse"));
+  assert.ok(!output.includes("correct-horse"));
+});
+
+test("authenticated: defaults the user name to sumi", () => {
+  const { result, calls, output } = runMonitor({
+    body: authenticatedBody,
+    credentials: { DASHBOARD_PASSWORD: "correct-horse" },
+  });
+  assert.equal(result.status, 0, output);
+  assert.equal(calls[0].authorization, basic("sumi", "correct-horse"));
+});
+
+test("unauthenticated: stops on the liveness-only response without retrying", () => {
+  const { result, report, calls, output } = runMonitor({
+    body: livenessOnlyBody,
+    credentials: { DASHBOARD_PASSWORD: "wrong-horse" },
+  });
+  assert.equal(result.status, 1, output);
+  assert.deepEqual(report.failures, ["HEALTH_CHECK_UNAUTHENTICATED"]);
+  assert.equal(report.status, "unavailable");
+  assert.equal(calls.length, 1, "20回のリトライはしない");
+  assert.match(output, /HEALTH_CHECK_UNAUTHENTICATED/);
+});
+
+test("unauthenticated: stops on HTTP 401 without retrying", () => {
+  const { result, report, calls, output } = runMonitor({
+    body: { ok: false, error: "Authentication required." },
+    httpStatus: 401,
+    credentials: { DASHBOARD_PASSWORD: "wrong-horse" },
+  });
+  assert.equal(result.status, 1, output);
+  assert.deepEqual(report.failures, ["HEALTH_CHECK_UNAUTHENTICATED"]);
+  assert.equal(calls.length, 1, "20回のリトライはしない");
+});
+
+test("missing credentials: dedicated failure, no request, not HEALTH_CHECK_UNAVAILABLE", () => {
+  const { result, report, calls, output } = runMonitor({
+    body: authenticatedBody,
+    credentials: null,
+  });
+  assert.equal(result.status, 1, output);
+  assert.deepEqual(report.failures, ["HEALTH_CHECK_CREDENTIALS_MISSING"]);
+  assert.ok(!report.failures.includes("HEALTH_CHECK_UNAVAILABLE"));
+  assert.equal(report.status, "unavailable");
+  assert.equal(calls.length, 0, "リクエストを投げない");
+  assert.match(output, /DASHBOARD_PASSWORD is not set/);
+});

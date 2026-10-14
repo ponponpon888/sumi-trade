@@ -99,7 +99,9 @@ Invoke-RestMethod -Uri https://sumi-trade-lab.vercel.app/api/health -Headers @{ 
 
 ユーザー名は `DASHBOARD_USER` の値で、未設定なら `sumi` です。
 
-`buildVersion` 以下の詳細はBasic認証が通ったときだけ返ります。認証なしのときは `ok`・`service`・`mode` の3項目だけで、ビルドの新旧は分かりません。`scripts/check-production-health.mjs` は認証を送らないため、現状この比較には使えません。
+`buildVersion` 以下の詳細はBasic認証が通ったときだけ返ります。認証なしのときは `ok`・`service`・`mode` の3項目だけで、ビルドの新旧は分かりません。
+
+`scripts/check-production-health.mjs` も同じ認証情報を `DASHBOARD_USER` / `DASHBOARD_PASSWORD` から読んで同じ比較をします。認証情報が未設定のときは、リクエストを投げずに `HEALTH_CHECK_CREDENTIALS_MISSING` で終わります。
 
 ### 紙上エンジンの緊急停止
 

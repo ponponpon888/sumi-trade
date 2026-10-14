@@ -21,6 +21,10 @@ jobs:
         id: health
         env:
           SUMI_HEALTH_REPORT_PATH: production-health-report.json
+          # 未登録のうちは空文字が入り、スクリプトはリクエストを投げずに
+          # HEALTH_CHECK_CREDENTIALS_MISSING で終わる。再開時にSecretsへ登録する。
+          DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
         run: node scripts/check-production-health.mjs
       - name: Preserve failed health audit
         if: failure() && steps.health.outcome == 'failure'
