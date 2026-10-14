@@ -16,18 +16,63 @@ const CONFIGURATION_KEYS = new Set([
   "SUMI_EMERGENCY_STOP",
 ]);
 
+const DASHBOARD_USER = process.env.DASHBOARD_USER?.trim() || "sumi";
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD?.trim();
+
+/**
+ * 再試行しても結果が変わらない失敗。認証情報が無い・通らない場合がこれにあたる。
+ * 20回のリトライは新しいデプロイの反映を待つためのもので、認証の問題には効かない。
+ */
+class FatalHealthError extends Error {
+  constructor(failure, message) {
+    super(message);
+    this.failure = failure;
+  }
+}
+
+function authorizationHeader() {
+  const pair = Buffer.from(`${DASHBOARD_USER}:${DASHBOARD_PASSWORD}`).toString("base64");
+  return `Basic ${pair}`;
+}
+
+/**
+ * 認証なしの /api/health は ok・service・mode の3項目だけを返す。buildVersion が無く、
+ * かつその3項目の形に見えるなら認証が通っていない。待っても詳細は来ない。
+ */
+function isUnauthenticatedSurface(health) {
+  return (
+    Boolean(health) &&
+    health.buildVersion === undefined &&
+    typeof health.ok === "boolean" &&
+    typeof health.service === "string"
+  );
+}
+
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function readHealth() {
   const response = await fetch(HEALTH_URL, {
-    headers: { accept: "application/json" },
+    headers: { accept: "application/json", authorization: authorizationHeader() },
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
+  if (response.status === 401) {
+    throw new FatalHealthError(
+      "HEALTH_CHECK_UNAUTHENTICATED",
+      "Health endpoint rejected the dashboard credentials (HTTP 401)",
+    );
+  }
   if (!response.ok) throw new Error(`Health endpoint returned HTTP ${response.status}`);
-  return response.json();
+  const health = await response.json();
+  if (isUnauthenticatedSurface(health)) {
+    throw new FatalHealthError(
+      "HEALTH_CHECK_UNAUTHENTICATED",
+      "Health endpoint returned only the unauthenticated liveness fields; the audit needs dashboard credentials",
+    );
+  }
+  return health;
 }
 
 async function saveReport(report) {
@@ -146,6 +191,17 @@ function configurationIssues(health) {
 }
 
 async function main() {
+  /**
+   * 認証情報が無ければ、リクエストを一度も投げずに終わる。詳細を返さない応答を
+   * 20回待つのは時間の無駄で、失敗の理由も HEALTH_CHECK_UNAVAILABLE に埋もれる。
+   */
+  if (!DASHBOARD_PASSWORD) {
+    throw new FatalHealthError(
+      "HEALTH_CHECK_CREDENTIALS_MISSING",
+      "DASHBOARD_PASSWORD is not set; /api/health returns the detail only to authenticated callers. Set DASHBOARD_PASSWORD (and DASHBOARD_USER if it is not the default \"sumi\")",
+    );
+  }
+
   let health = null;
   let lastError = null;
 
@@ -157,6 +213,7 @@ async function main() {
         `Production build is ${health?.buildVersion ?? "unknown"}; waiting for ${expectedVersion}`,
       );
     } catch (error) {
+      if (error instanceof FatalHealthError) throw error;
       lastError = error;
     }
     if (attempt < 20) await wait(15_000);
@@ -227,19 +284,20 @@ try {
   await main();
 } catch (error) {
   const message = error instanceof Error ? error.message : "Unknown production health error";
+  const failure = error instanceof FatalHealthError ? error.failure : "HEALTH_CHECK_UNAVAILABLE";
   await saveReport({
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
     healthUrl: HEALTH_URL,
     expectedVersion,
     status: "unavailable",
-    failures: ["HEALTH_CHECK_UNAVAILABLE"],
+    failures: [failure],
     warnings: [],
     configurationIssues: [],
     sourceDiagnostics: [],
     error: message,
     snapshot: safeSnapshot(null),
   });
-  console.error("Production health Error", message);
+  console.error("Production health Error", failure, message);
   process.exitCode = 1;
 }

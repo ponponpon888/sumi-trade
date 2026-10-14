@@ -365,3 +365,5 @@ v1.30の`PROTECTIVE`は「止めたBUYがコスト控除後に負けたか」を
 本番監視スクリプト`scripts/check-production-health.mjs`は`/api/health`を認証なしで読むため、この変更後は`buildVersion`以下の詳細を取得できません。スクリプトとワークフローへ認証を渡す対応は別途必要です。BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
 
 `next`と`eslint-config-next`を`16.3.4`から`16.3.8`へ上げました。`npm audit`の報告は6件から5件になり、critical 1件（`next`のadvisory 7件）が解消しました。残る5件は`braces`起点の連鎖でdevDependenciesのみです。16.3.5〜16.3.8はバグ修正とセキュリティ修正のbackportで、リリースノートに破壊的変更の記載はありません。lockfileの差分は`next`・`@next/*`10件・`eslint-config-next`だけで、他のパッケージのバージョンは動いていません。BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
+
+本番監視スクリプト`scripts/check-production-health.mjs`が`DASHBOARD_USER`／`DASHBOARD_PASSWORD`を読み、Basic認証で`/api/health`を叩くようにしました。認証情報が未設定のときは、リクエストを一度も投げずに`HEALTH_CHECK_CREDENTIALS_MISSING`で終わります。認証なしの応答（`ok`・`service`・`mode`の3項目）やHTTP 401を受けたときは`HEALTH_CHECK_UNAUTHENTICATED`で即座に終わり、20回のリトライをしません。リトライは新しいデプロイの反映を待つためのもので、認証の問題には効かないためです。回帰テストに認証あり・なし・未設定の3通りを追加し、送信ヘッダーとリクエスト回数まで検査します。GitHub Secretsは追加していないため、`Production health`ワークフロー（停止中）は登録まで`HEALTH_CHECK_CREDENTIALS_MISSING`で終わります。
