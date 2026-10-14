@@ -127,6 +127,7 @@ KyberSwap Aggregator APIのルート照会にはAPIキーを保存せず、公�
 - 現在できること: [docs/capabilities.md](docs/capabilities.md)
 - データ取得元の監視: [docs/data-source-monitoring.md](docs/data-source-monitoring.md)
 - 変更履歴: [CHANGELOG.md](CHANGELOG.md)
+- 依存関係の脆弱性監査: [docs/dependency-audit-2026-10-15.md](docs/dependency-audit-2026-10-15.md)
 - 安全ゲート一覧: [docs/safety-gates.md](docs/safety-gates.md)
 - Base paper preflight: [docs/base-paper-preflight.md](docs/base-paper-preflight.md)
 - Base funding planning: [docs/base-funding-planning.md](docs/base-funding-planning.md)
