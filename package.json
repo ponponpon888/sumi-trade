@@ -2,6 +2,23 @@
   "name": "sumi-trade-lab",
   "version": "1.37.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ponponpon888/sumi-trade.git"
+  },
+  "keywords": [
+    "ethereum",
+    "dex",
+    "paper-trading",
+    "backtesting",
+    "walk-forward",
+    "risk-management",
+    "fail-closed",
+    "nextjs",
+    "typescript",
+    "research"
+  ],
   "type": "module",
   "scripts": {
     "dev": "next dev",
