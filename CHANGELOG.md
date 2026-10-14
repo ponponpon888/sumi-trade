@@ -363,3 +363,5 @@ v1.30の`PROTECTIVE`は「止めたBUYがコスト控除後に負けたか」を
 `/api/health`は認証なしのとき`ok`・`service`・`mode`だけを返します。従来は緊急停止の状態、ウォレット設定の有無、取得元の稼働状況まで認証なしで読めました。秘密情報は含まれませんが、運用の内情が外から見えるため、詳細はBasic認証が通ったときだけ返します。`proxy.ts`のmatcherは変更しません。healthをmatcherへ入れると認証なしの死活確認ができなくなるため、認証はルート内で分岐します。`DASHBOARD_PASSWORD`未設定時はダッシュボードと同じく503で閉じます。
 
 本番監視スクリプト`scripts/check-production-health.mjs`は`/api/health`を認証なしで読むため、この変更後は`buildVersion`以下の詳細を取得できません。スクリプトとワークフローへ認証を渡す対応は別途必要です。BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
+
+`next`と`eslint-config-next`を`16.3.4`から`16.3.8`へ上げました。`npm audit`の報告は6件から5件になり、critical 1件（`next`のadvisory 7件）が解消しました。残る5件は`braces`起点の連鎖でdevDependenciesのみです。16.3.5〜16.3.8はバグ修正とセキュリティ修正のbackportで、リリースノートに破壊的変更の記載はありません。lockfileの差分は`next`・`@next/*`10件・`eslint-config-next`だけで、他のパッケージのバージョンは動いていません。BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
