@@ -359,3 +359,7 @@ v1.30の`PROTECTIVE`は「止めたBUYがコスト控除後に負けたか」を
 - 既存の`status`（`PROTECTIVE`など）はそのまま残します。ダッシュボードの判定カードに`VS PASSED`行を追加し、研究用JSONの`buyGatePerformance`に`selectivity`と区間を追加します。
 
 模擬データ（値動きは乱数）では、すべての判定が`NOT SELECTIVE`になることを確認しました。BUY／SELL判定・安全ゲートの条件・昇格条件・PAPER MODE・`executionLocked: true`は変更しません。
+
+`/api/health`は認証なしのとき`ok`・`service`・`mode`だけを返します。従来は緊急停止の状態、ウォレット設定の有無、取得元の稼働状況まで認証なしで読めました。秘密情報は含まれませんが、運用の内情が外から見えるため、詳細はBasic認証が通ったときだけ返します。`proxy.ts`のmatcherは変更しません。healthをmatcherへ入れると認証なしの死活確認ができなくなるため、認証はルート内で分岐します。`DASHBOARD_PASSWORD`未設定時はダッシュボードと同じく503で閉じます。
+
+本番監視スクリプト`scripts/check-production-health.mjs`は`/api/health`を認証なしで読むため、この変更後は`buildVersion`以下の詳細を取得できません。スクリプトとワークフローへ認証を渡す対応は別途必要です。BUY／SELL判定・安全ゲート・PAPER MODE・`executionLocked: true`は変更しません。
