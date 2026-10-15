@@ -72,3 +72,93 @@
 `node_modules` を残したまま `npm install` を実行すると、Windows では `wasm32` 向けの optional 依存が刈られ、**`@emnapi/runtime@1.11.3` と `@emnapi/core@1.10.0` の top-level エントリが lockfile から消えます**。`@img/sharp-wasm32` が `@emnapi/runtime: ^1.11.3` を要求するため、この状態では Linux の `npm ci` が `Missing: @emnapi/runtime@1.11.3 from lock file` で失敗します。PR #2 で直したのと同じ不整合です。
 
 `node_modules` と `package-lock.json` の両方を消してから `npm install` すると、459 エントリ・`resolved`/`integrity` 欠落 0 で再生成され、`next`・`@next/*`・`eslint-config-next` 以外のバージョンは動きません。Windows でこのリポジトリの lockfile を更新するときは、この手順を使ってください。
+
+## 更新 — 2026-10-15（残り5件の到達性と上流の状況）
+
+`next` を 16.3.8 へ上げた後の `npm audit` を再確認しました。**critical 0・high 5** で、high 5件はすべて同じ advisory [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)（`braces` の深くネストしたパターンによるスタック枯渇 DoS）の連鎖です。
+
+- npm 11.6.2 / Node v24.11.1
+- `npm audit --omit=dev` は `found 0 vulnerabilities`。5件はすべて devDependencies 側で、本番ランタイムには載りません
+
+### critical は解消済み（ビルドログに出続けていた理由）
+
+critical だった [GHSA-vcvr-r3jv-pc5j](https://github.com/advisories/GHSA-vcvr-r3jv-pc5j)（`next/og` の `ImageResponse` における RCE、対象 `>=16.2.0 <16.3.6`）は、**PR #6（`1b4e1e8`）で `next` を 16.3.4 → 16.3.8 へ上げた時点で解消済み**です。いまの `package.json` は `next: 16.3.8` で、`npm audit` に `next` の advisory は1件も出ません。
+
+それでも本番のビルドログに critical 1件が出続けていたのは、**このリポジトリが手動デプロイで、最後にデプロイしたコミットが 16.3.8 より前だから**です。Vercel はデプロイ対象コミットの依存関係をインストールして監査するため、ログはその時点の `next 16.3.4` を映します。16.3.8 を含むコミットをデプロイすれば消えます。コード側で追加の対応は要りません。
+
+### 依存経路
+
+```
+sumi-trade-lab@1.38.0
+└── eslint-config-next@16.3.8        ← 直接依存（devDependencies）
+    └── @next/eslint-plugin-next@16.3.8
+        └── fast-glob@3.3.1          ← プラグインが "3.3.1" で完全固定
+            └── micromatch@4.0.8
+                └── braces@3.0.3     ← 脆弱な版
+```
+
+### 上流に修正版が無いことの確認
+
+| パッケージ | 最新 | 要求 | 状況 |
+| --- | --- | --- | --- |
+| `braces` | 3.0.3 | — | advisory の対象が `<=3.0.3` なので**修正版が1つも公開されていない** |
+| `micromatch` | 4.0.8 | `braces: ^3.0.3` | 最新でも脆弱な版を引く |
+| `fast-glob` | 3.3.3 | `micromatch: ^4.0.8` | 同上 |
+| `@next/eslint-plugin-next` | 16.4.1 | `fast-glob: "3.3.1"` | **最新でも完全固定**。`eslint-config-next` を 16.4.1 へ上げても経路は消えない |
+
+差し替え先の `braces` が存在しないため、`package.json` の `overrides` では解決できません。`npm audit fix`（`--force` なし）は `--dry-run` でも5件のままで、解決数は0です。
+
+### この構成での到達性 — 呼ばれていません
+
+`braces` へ到達する入口は `fast-glob` で、プラグイン内の使用箇所は1つだけです（`dist/utils/get-root-dirs.js`）。
+
+```js
+var processRootDir = function (rootDir) {
+  return (0, _fastglob.globSync)(rootDir.replace(/\\/g, '/'), { onlyDirectories: true });
+};
+var getRootDirs = function (context) {
+  var rootDirs = [context.cwd];
+  var rootDir = (context.settings.next || {}).rootDir;
+  if (typeof rootDir === 'string') { rootDirs = processRootDir(rootDir); }
+  else if (Array.isArray(rootDir)) { /* ... */ }
+  return rootDirs;
+};
+```
+
+glob が走るのは ESLint 設定に `settings.next.rootDir` がある場合だけです。`eslint.config.mjs` は `settings` を設定しておらず、`eslint-config-next` 側が入れる `settings` も `react.version` と `import/parsers` だけで `next.rootDir` を含みません。リポジトリ全体に `rootDir` の記述はありません。
+
+コード読みだけでは設定の見落ちを排除できないため、実測もしました。手順と結果は次のとおりです。
+
+1. 対象ファイルを退避する
+   ```
+   cp node_modules/@next/eslint-plugin-next/dist/utils/get-root-dirs.js /tmp/grd.bak
+   ```
+2. `globSync` の呼び出し直前に例外を差し込む。`processRootDir` の `return (0, _fastglob.globSync)(` を次の形へ置き換える
+   ```js
+   throw new Error("FAST_GLOB_REACHED"); return (0, _fastglob.globSync)(
+   ```
+3. `npm run lint`（`eslint .`）を実行する
+4. 退避したファイルで上書きして復元し、`git status` がクリーンであることを確認する
+
+**結果: `npm run lint` は終了コード 0 で成功しました。**`FAST_GLOB_REACHED` は送出されず、`fast-glob` は一度も呼ばれていません。もしどこかの設定で `settings.next.rootDir` が効いていれば、この差し込みで lint は必ず落ちます。
+
+この実測は「このリポジトリの lint からこのコードを呼んでいない」という確認であり、advisory の仕組み自体（`braces` が実際にスタックを枯渇させるか）を検証したものではありません。
+
+### `npm audit fix --force` を実行しない理由
+
+npm が提示する唯一の修正は `eslint-config-next` の **14.2.35 へのダウングレード**（`isSemVerMajor: true`）です。
+
+- `eslint.config.mjs` は `eslint-config-next/core-web-vitals` と `/typescript` を flat config の配列として `...` で展開しています。14.x は旧 `.eslintrc` 形式のオブジェクトを返すため、スプレッドで TypeError になり `npm run lint` が失敗します
+- 14.x の peerDependencies は `eslint ^7 || ^8` で、このリポジトリの `eslint 9.39.5` と合いません
+- Next 16 のコードに Next 14 用のルールを当てることになり、`@typescript-eslint` などの dev ツリー全体が巻き戻ります
+
+到達性がゼロである一方で lint が確実に壊れるため、交換に見合いません。
+
+### 残っているもの
+
+5件すべて未修正で、**上流（`braces` もしくは `fast-glob` の micromatch 依存）が動くまで直せません**。再評価が必要になるのは次のどちらかです。
+
+- `braces` に 3.0.3 より後の版が出る、または `micromatch` が `braces` を外す
+- `@next/eslint-plugin-next` が `fast-glob` 固定をやめる、または glob をやめる
+
+なお、本番の Vercel ビルドログは最後にデプロイしたコミットの依存で監査されるため、`next 16.3.8` を含むデプロイを行うまで critical 1件を表示し続けます。コード側では解消済みです。
