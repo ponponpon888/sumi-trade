@@ -80,6 +80,12 @@
 - npm 11.6.2 / Node v24.11.1
 - `npm audit --omit=dev` は `found 0 vulnerabilities`。5件はすべて devDependencies 側で、本番ランタイムには載りません
 
+### critical は解消済み（ビルドログに出続けていた理由）
+
+critical だった [GHSA-vcvr-r3jv-pc5j](https://github.com/advisories/GHSA-vcvr-r3jv-pc5j)（`next/og` の `ImageResponse` における RCE、対象 `>=16.2.0 <16.3.6`）は、**PR #6（`1b4e1e8`）で `next` を 16.3.4 → 16.3.8 へ上げた時点で解消済み**です。いまの `package.json` は `next: 16.3.8` で、`npm audit` に `next` の advisory は1件も出ません。
+
+それでも本番のビルドログに critical 1件が出続けていたのは、**このリポジトリが手動デプロイで、最後にデプロイしたコミットが 16.3.8 より前だから**です。Vercel はデプロイ対象コミットの依存関係をインストールして監査するため、ログはその時点の `next 16.3.4` を映します。16.3.8 を含むコミットをデプロイすれば消えます。コード側で追加の対応は要りません。
+
 ### 依存経路
 
 ```
@@ -121,7 +127,22 @@ var getRootDirs = function (context) {
 
 glob が走るのは ESLint 設定に `settings.next.rootDir` がある場合だけです。`eslint.config.mjs` は `settings` を設定しておらず、`eslint-config-next` 側が入れる `settings` も `react.version` と `import/parsers` だけで `next.rootDir` を含みません。リポジトリ全体に `rootDir` の記述はありません。
 
-実測もしました。`globSync` の呼び出し直前に `throw` を差し込んで `npm run lint` を実行すると、そのまま終了コード0で成功します（`fast-glob` は一度も呼ばれない）。確認後に `node_modules` は復元しています。advisory の仕組み自体を検証したわけではなく、「このリポジトリの lint からこのコードを呼んでいない」という確認です。
+コード読みだけでは設定の見落ちを排除できないため、実測もしました。手順と結果は次のとおりです。
+
+1. 対象ファイルを退避する
+   ```
+   cp node_modules/@next/eslint-plugin-next/dist/utils/get-root-dirs.js /tmp/grd.bak
+   ```
+2. `globSync` の呼び出し直前に例外を差し込む。`processRootDir` の `return (0, _fastglob.globSync)(` を次の形へ置き換える
+   ```js
+   throw new Error("FAST_GLOB_REACHED"); return (0, _fastglob.globSync)(
+   ```
+3. `npm run lint`（`eslint .`）を実行する
+4. 退避したファイルで上書きして復元し、`git status` がクリーンであることを確認する
+
+**結果: `npm run lint` は終了コード 0 で成功しました。**`FAST_GLOB_REACHED` は送出されず、`fast-glob` は一度も呼ばれていません。もしどこかの設定で `settings.next.rootDir` が効いていれば、この差し込みで lint は必ず落ちます。
+
+この実測は「このリポジトリの lint からこのコードを呼んでいない」という確認であり、advisory の仕組み自体（`braces` が実際にスタックを枯渇させるか）を検証したものではありません。
 
 ### `npm audit fix --force` を実行しない理由
 
