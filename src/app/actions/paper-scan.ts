@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 
 import { getDashboardAccess } from "@/lib/dashboard-auth";
 import { recordPaperScan } from "@/lib/paper-journal";
-import { getTradingDashboardData } from "@/lib/trading-engine";
+import { getPaperScanInput } from "@/lib/trading-engine";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown scan error";
@@ -25,8 +25,8 @@ export async function runManualPaperScan() {
   console.info("[paper.scan.manual] started", { startedAt });
 
   try {
-    const data = await getTradingDashboardData();
-    const journal = await recordPaperScan(data);
+    const { data, journalStore } = await getPaperScanInput();
+    const journal = await recordPaperScan(data, Date.now(), journalStore);
 
     if (journal.status === "disabled" || journal.status === "error") {
       console.error("[paper.scan.manual] journal write failed", {

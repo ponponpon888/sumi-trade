@@ -15,7 +15,6 @@ import type {
   DataSourceQualitySnapshot,
   OnchainPreflightAssessment,
   PaperDataSourceObservation,
-  PaperScanRecord,
   PortfolioSnapshot,
   PreflightAssessment,
 } from "@/lib/types";
@@ -36,6 +35,18 @@ const DATA_SOURCE_IDS: DataSourceId[] = [
 ];
 
 const SCAN_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * The part of a scan that the 24h source statistics read.
+ *
+ * A full PaperScanRecord satisfies it, and so does the slim per-bucket row the
+ * derived store keeps. That is what lets the 24h window outlive the raw records
+ * it used to be computed from.
+ */
+export type DataSourceQualityObservationRow = {
+  bucketTimeMs: number;
+  dataSourceQuality?: PaperDataSourceObservation[];
+};
 
 type TimedQuality = { status: DataSourceQualityItem["status"]; bucketTimeMs: number };
 type SlotObservation = TimedQuality & {
@@ -118,7 +129,7 @@ function maxBreakdown(
 }
 
 function uniqueSourceObservations(
-  records: PaperScanRecord[],
+  records: DataSourceQualityObservationRow[],
   source: DataSourceId,
   currentDefinitionOnly: boolean,
 ): SlotObservation[] {
@@ -293,7 +304,7 @@ export function assessDataSourceQuality(
 }
 
 export function calculateDataSourceQualityHistory(
-  records: PaperScanRecord[],
+  records: DataSourceQualityObservationRow[],
   nowMs = Date.now(),
 ): DataSourceQualityHistoryItem[] {
   const windowStart = nowMs - DATA_SOURCE_HISTORY_WINDOW_MS;
@@ -361,7 +372,7 @@ export function calculateDataSourceQualityHistory(
 }
 
 export function calculateDataSourceIncidents(
-  records: PaperScanRecord[],
+  records: DataSourceQualityObservationRow[],
   nowMs = Date.now(),
 ): DataSourceIncidentItem[] {
   const windowStart = nowMs - DATA_SOURCE_HISTORY_WINDOW_MS;
