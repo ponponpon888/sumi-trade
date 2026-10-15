@@ -126,6 +126,7 @@ const {
 
 const WALLET = "0x0000000000000000000000000000000000000001";
 const INDEX_KEY = `sumi:paper:v1:${WALLET}:index`;
+const CURSOR_KEY = `sumi:paper:v1:${WALLET}:d1:cursor`;
 const ONE_HOUR_MS = 60 * 60 * 1_000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 const SCAN_CADENCE_MS = 5 * 60 * 1_000;
@@ -251,6 +252,63 @@ describe("journal day keys", () => {
     expect(journalDayKeys(fromMs, fromMs + ONE_HOUR_MS)).toEqual([
       "2026-09-30",
     ]);
+  });
+});
+
+/**
+ * The first scan after this layout ships finds an index left by the previous
+ * one, with up to a month of records behind it, and builds the derived store
+ * from them. That write is also what trims the index down to the settlement
+ * window, so a seed that read nothing has to stop before it: storage that
+ * answers the range but not the keys inside it would otherwise record a
+ * one-scan history and leave the retained records with nothing pointing at
+ * them.
+ */
+describe("journal seed guard", () => {
+  beforeEach(() => {
+    values.clear();
+    zsets.clear();
+    commands = [];
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://fake.upstash.io");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "fake-token");
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("writes no cursor and trims nothing when the indexed scans cannot be read", async () => {
+    const nowMs = START_MS + 20 * ONE_DAY_MS;
+    const index = new Map<string, number>();
+    for (let hour = 1; hour <= 5; hour += 1) {
+      index.set(`scan-${hour}`, nowMs - hour * ONE_HOUR_MS);
+    }
+    zsets.set(INDEX_KEY, new Map(index));
+
+    const journal = await recordPaperScan(dashboardData(), nowMs);
+
+    expect(journal.status).toBe("error");
+    expect(values.has(CURSOR_KEY)).toBe(false);
+    expect(zsets.get(INDEX_KEY)).toEqual(index);
+    expect(commands.some((command) => command.name === "set")).toBe(false);
+    expect(
+      commands.some((command) => command.name === "zremrangebyscore"),
+    ).toBe(false);
+  });
+
+  it("seeds from the records the index still lists", async () => {
+    const firstMs = START_MS;
+    await recordPaperScan(dashboardData(), firstMs);
+    // The state the first scan on this layout meets: records and index, no cursor.
+    values.delete(CURSOR_KEY);
+    commands = [];
+
+    const journal = await recordPaperScan(
+      dashboardData(),
+      firstMs + SCAN_CADENCE_MS,
+    );
+
+    expect(journal.status).not.toBe("error");
+    expect(values.has(CURSOR_KEY)).toBe(true);
+    expect(journal.scanCount).toBe(2);
   });
 });
 

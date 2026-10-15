@@ -219,12 +219,32 @@ export type PaperJournalStore = {
   seeded: boolean;
 };
 
+/**
+ * Raised when a seed read cannot see the scans its own index lists.
+ *
+ * Seeding is the one read that builds the cursor out of the raw records, and
+ * the write that follows it trims the index to the settlement window. If the
+ * records came back empty for an index that is not, carrying on would declare
+ * an empty history and then make every record still retained behind that
+ * index unreachable, so the read fails instead and the next scan retries it.
+ */
+export class JournalSeedUnavailableError extends Error {
+  constructor(public readonly indexedScans: number) {
+    // The count only: never a key, a wallet address or a stored value.
+    super(`JOURNAL_SEED_UNREADABLE:${indexedScans}`);
+    this.name = "JournalSeedUnavailableError";
+  }
+}
+
+/** The settlement window, with how many scans its index listed. */
+type RawRecordRead = { indexed: number; records: PaperScanRecord[] };
+
 async function readRawRecords(
   redis: Redis,
   prefix: string,
   fromMs: number,
   nowMs: number,
-): Promise<PaperScanRecord[]> {
+): Promise<RawRecordRead> {
   const ids = await redis.zrange<string[]>(`${prefix}:index`, fromMs, nowMs, {
     byScore: true,
   });
@@ -232,7 +252,7 @@ async function readRawRecords(
     redis,
     ids.map((id) => `${prefix}:record:${id}`),
   );
-  return values.filter(isPaperScanRecord);
+  return { indexed: ids.length, records: values.filter(isPaperScanRecord) };
 }
 
 async function readStore(
@@ -273,7 +293,7 @@ async function readStore(
   const rawFromMs = cursor
     ? nowMs - RAW_WINDOW_MS
     : nowMs - JOURNAL_RECORD_WINDOW_DAYS * ONE_DAY_MS;
-  const [qualityValues, rawRecords] = await Promise.all([
+  const [qualityValues, rawRead] = await Promise.all([
     mgetAll(
       redis,
       qualityBuckets.map(
@@ -282,11 +302,25 @@ async function readStore(
     ),
     needsRawPrices || !cursor
       ? readRawRecords(redis, prefix, rawFromMs, nowMs)
-      : Promise.resolve<PaperScanRecord[]>([]),
+      : Promise.resolve<RawRecordRead>({ indexed: 0, records: [] }),
   ]);
 
+  /*
+   * An index with members but no readable record behind any of them is a
+   * failed read, not an empty journal: storage that answers a range but not
+   * the keys in it would otherwise seed a one-scan history over the records
+   * it just failed to return. A fresh wallet has an empty index and seeds
+   * normally.
+   */
+  if (!cursor && rawRead.indexed > 0 && rawRead.records.length === 0) {
+    console.error("[paper.journal.seed] indexed scans could not be read", {
+      indexedScans: rawRead.indexed,
+    });
+    throw new JournalSeedUnavailableError(rawRead.indexed);
+  }
+
   return {
-    rawRecords,
+    rawRecords: rawRead.records,
     cursor,
     scanDays,
     tradeDays,
