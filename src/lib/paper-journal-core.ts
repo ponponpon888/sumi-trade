@@ -37,6 +37,7 @@ import {
   calculateDataSourceIncidents,
   calculateDataSourceQualityHistory,
   DATA_SOURCE_QUALITY_DEFINITION,
+  type DataSourceQualityObservationRow,
 } from "@/lib/data-source-quality";
 import { simulateBarrierExit, type BarrierPricePoint } from "@/lib/barrier-scoring";
 import { calculateChallengerComparison } from "@/lib/challengers";
@@ -54,6 +55,16 @@ export const JOURNAL_WINDOW_DAYS = 7 as const;
 export const JOURNAL_ANALYTICS_WINDOW_DAYS = 30 as const;
 export const JOURNAL_RECORD_WINDOW_DAYS = 31 as const;
 export const OUTCOME_HORIZON_HOURS = 6 as const;
+/**
+ * How far back the raw records have to reach.
+ *
+ * Settlement looks for a price six hours after entry and accepts one up to 90
+ * minutes late, so every signal is decided within 7.5h of its entry. Eight
+ * hours covers that with half an hour to spare, and nothing outside settlement
+ * reads a raw price, so the records older than this are the derived store's
+ * job rather than the window's.
+ */
+export const JOURNAL_RAW_WINDOW_HOURS = 8 as const;
 export const MINIMUM_QUALIFICATION_SAMPLES = 30;
 export const MINIMUM_OBSERVATION_HOURS = 168 as const;
 export const MINIMUM_SCAN_COVERAGE_PERCENT = 80 as const;
@@ -62,6 +73,8 @@ const SCAN_BUCKET_MS = 5 * 60 * 1_000;
 const SIGNAL_COOLDOWN_MS = OUTCOME_HORIZON_HOURS * 60 * 60 * 1_000;
 const OUTCOME_HORIZON_MS = OUTCOME_HORIZON_HOURS * 60 * 60 * 1_000;
 const MAX_OUTCOME_DELAY_MS = 90 * 60 * 1_000;
+/** After this long past entry, a signal can no longer settle. */
+export const SETTLEMENT_DEADLINE_MS = OUTCOME_HORIZON_MS + MAX_OUTCOME_DELAY_MS;
 const SHORT_HORIZON_MAX_DELAY_MS = 15 * 60 * 1_000;
 const MIN_PROFIT_FACTOR = 1.2;
 const MAX_DRAWDOWN_PERCENT = 8;
@@ -198,25 +211,58 @@ function decisionDataQuality(
   };
 }
 
+/**
+ * The scan timing the readiness gate reads.
+ *
+ * Three values instead of the records, because the derived store has to supply
+ * the first scan from its cursor once the raw records behind it are gone.
+ */
+export type OperationalReadinessInput = {
+  firstScanMs: number | null;
+  lastScanMs: number | null;
+  /** Buckets within the last 24h; counted distinct for coverage. */
+  recentBucketTimesMs: number[];
+};
+
+export function operationalReadinessInputFromScans(
+  scans: Array<{ bucketTimeMs: number }>,
+  nowMs: number,
+): OperationalReadinessInput {
+  const ordered = scans.toSorted(
+    (left, right) => left.bucketTimeMs - right.bucketTimeMs,
+  );
+  return {
+    firstScanMs: ordered[0]?.bucketTimeMs ?? null,
+    lastScanMs: ordered.at(-1)?.bucketTimeMs ?? null,
+    recentBucketTimesMs: ordered
+      .filter((scan) => scan.bucketTimeMs >= nowMs - ONE_DAY_MS)
+      .map((scan) => scan.bucketTimeMs),
+  };
+}
+
 export function calculateOperationalReadiness(
   records: PaperScanRecord[],
   nowMs: number,
   modelQualification: PaperQualification,
 ): PaperOperationalReadiness {
-  const ordered = records.toSorted(
-    (left, right) => left.bucketTimeMs - right.bucketTimeMs,
+  return calculateOperationalReadinessFrom(
+    operationalReadinessInputFromScans(records, nowMs),
+    nowMs,
+    modelQualification,
   );
-  const firstScanMs = ordered[0]?.bucketTimeMs ?? null;
-  const lastScanMs = ordered.at(-1)?.bucketTimeMs ?? null;
+}
+
+export function calculateOperationalReadinessFrom(
+  input: OperationalReadinessInput,
+  nowMs: number,
+  modelQualification: PaperQualification,
+): PaperOperationalReadiness {
+  const { firstScanMs, lastScanMs } = input;
   const observationHours = firstScanMs === null
     ? 0
     : round(Math.max(0, nowMs - firstScanMs) / ONE_HOUR_MS, 1);
   const observationPassed = observationHours >= MINIMUM_OBSERVATION_HOURS;
-  const recentBucketCount = new Set(
-    ordered
-      .filter((record) => record.bucketTimeMs >= nowMs - ONE_DAY_MS)
-      .map((record) => record.bucketTimeMs),
-  ).size;
+  const recentBucketCount = new Set(input.recentBucketTimesMs).size;
   const expectedDailyScans = ONE_DAY_MS / SCAN_BUCKET_MS;
   const scanCoverage24hPercent = round(
     Math.min(100, (recentBucketCount / expectedDailyScans) * 100),
@@ -421,29 +467,91 @@ export function createPaperScanRecord(
   };
 }
 
-function selectIndependentSignals(
+/**
+ * Cooldown and dedupe state carried between incremental selections.
+ *
+ * `lastSignalAt` holds the bucket each cooldown key last fired at, and
+ * `seenDecisionIds` the bucket each decision id was first selected at. Plain
+ * records rather than Maps so the whole state round-trips through JSON storage.
+ */
+export type SignalSelectionState = {
+  lastSignalAt: Record<string, number>;
+  seenDecisionIds: Record<string, number>;
+};
+
+export function emptySignalSelectionState(): SignalSelectionState {
+  return { lastSignalAt: {}, seenDecisionIds: {} };
+}
+
+/**
+ * Drops state that can no longer change a selection.
+ *
+ * A cooldown entry older than the cooldown itself can never block a later
+ * signal, and a decision id is minted from its own record's bucket, so one from
+ * outside the retained raw window can never be offered again. Pruning both
+ * bounds the stored cursor without changing what gets selected.
+ */
+export function pruneSignalSelectionState(
+  state: SignalSelectionState,
+  keepFromMs: number,
+): SignalSelectionState {
+  const kept = (entries: Record<string, number>) =>
+    Object.fromEntries(
+      Object.entries(entries).filter(([, timeMs]) => timeMs >= keepFromMs),
+    );
+  return {
+    lastSignalAt: kept(state.lastSignalAt),
+    seenDecisionIds: kept(state.seenDecisionIds),
+  };
+}
+
+export function signalCooldownKey(signal: PaperSignalObservation): string {
+  return `${signal.model ?? "chart"}:${signal.priceKey ?? signal.symbol}:${signal.direction}`;
+}
+
+/**
+ * Cooldown-filtered signal selection, resumable from an earlier run's state.
+ *
+ * The cooldown makes selection path dependent: whether a signal is selected
+ * depends on which signals were selected before it, so an incremental caller
+ * has to carry lastSignalAt forward. Seeding an empty map instead selects a
+ * different set than a full replay over the same records would.
+ */
+export function selectIndependentSignalsFrom(
   records: PaperScanRecord[],
-): Array<{ record: PaperScanRecord; signal: PaperSignalObservation }> {
-  const selected: Array<{
-    record: PaperScanRecord;
-    signal: PaperSignalObservation;
-  }> = [];
-  const lastSignalAt = new Map<string, number>();
-  const seenDecisionIds = new Set<string>();
+  state: SignalSelectionState = emptySignalSelectionState(),
+): { selected: SignalCandidate[]; state: SignalSelectionState } {
+  const selected: SignalCandidate[] = [];
+  const lastSignalAt = new Map(Object.entries(state.lastSignalAt));
+  const seenDecisionIds = new Map(Object.entries(state.seenDecisionIds));
 
   for (const record of records) {
     for (const signal of record.signals) {
       if (signal.decisionId && seenDecisionIds.has(signal.decisionId)) continue;
-      const key = `${signal.model ?? "chart"}:${signal.priceKey ?? signal.symbol}:${signal.direction}`;
+      const key = signalCooldownKey(signal);
       const previous = lastSignalAt.get(key) ?? Number.NEGATIVE_INFINITY;
       if (record.bucketTimeMs - previous < SIGNAL_COOLDOWN_MS) continue;
       selected.push({ record, signal });
-      if (signal.decisionId) seenDecisionIds.add(signal.decisionId);
+      if (signal.decisionId) {
+        seenDecisionIds.set(signal.decisionId, record.bucketTimeMs);
+      }
       lastSignalAt.set(key, record.bucketTimeMs);
     }
   }
 
-  return selected;
+  return {
+    selected,
+    state: {
+      lastSignalAt: Object.fromEntries(lastSignalAt),
+      seenDecisionIds: Object.fromEntries(seenDecisionIds),
+    },
+  };
+}
+
+export function selectIndependentSignals(
+  records: PaperScanRecord[],
+): SignalCandidate[] {
+  return selectIndependentSignalsFrom(records).selected;
 }
 
 /** Index of the first record at or after timeMs; records are time-sorted. */
@@ -478,12 +586,38 @@ function priceAtHorizon(
   return null;
 }
 
-function settleSignal(
-  candidate: { record: PaperScanRecord; signal: PaperSignalObservation },
+/**
+ * A selected signal reduced to what settlement reads.
+ *
+ * Settlement needs the entry bucket, the entry's wall-clock stamp and the
+ * entry's data-quality band — never the rest of the entry record. Keeping only
+ * those lets a candidate wait in the cursor for its horizon while the record it
+ * came from leaves the raw window.
+ */
+export type SettleableCandidate = {
+  entryBucketTimeMs: number;
+  entryGeneratedAt: string;
+  entryDataQuality: PaperDecisionDataQuality | undefined;
+  signal: PaperSignalObservation;
+};
+
+export function settleableCandidate(
+  candidate: SignalCandidate,
+): SettleableCandidate {
+  return {
+    entryBucketTimeMs: candidate.record.bucketTimeMs,
+    entryGeneratedAt: candidate.record.generatedAt,
+    entryDataQuality: decisionDataQuality(candidate.record),
+    signal: candidate.signal,
+  };
+}
+
+export function settleCandidate(
+  candidate: SettleableCandidate,
   records: PaperScanRecord[],
 ): PaperTradeOutcome | null {
   const { signal } = candidate;
-  const entryMs = candidate.record.bucketTimeMs;
+  const entryMs = candidate.entryBucketTimeMs;
   const priceKey = signal.priceKey ?? signal.symbol;
   const settled = priceAtHorizon(
     records,
@@ -569,8 +703,8 @@ function settleSignal(
 
   return {
     ...signal,
-    entryDataQuality: decisionDataQuality(candidate.record),
-    signalTime: candidate.record.generatedAt,
+    entryDataQuality: candidate.entryDataQuality,
+    signalTime: candidate.entryGeneratedAt,
     outcomeTime: outcomeRecord.generatedAt,
     exitPriceUsd: exitPrice,
     grossReturnPercent: round(grossReturnPercent),
@@ -792,15 +926,14 @@ export function calculateSourceReasonImpact(
   });
 }
 
-export function collectPaperTradeOutcomes(
+/** Records the journal keeps: schema-valid, execution-locked, inside the window. */
+export function retainedJournalRecords(
   inputRecords: PaperScanRecord[],
-  nowMs = Date.now(),
-): PaperTradeOutcome[] {
-  const analyticsWindowStart =
-    nowMs - JOURNAL_ANALYTICS_WINDOW_DAYS * ONE_DAY_MS;
+  nowMs: number,
+): PaperScanRecord[] {
   const recordWindowStart =
     nowMs - JOURNAL_RECORD_WINDOW_DAYS * ONE_DAY_MS;
-  const records = inputRecords
+  return inputRecords
     .filter(
       (record) =>
         record.schemaVersion === 1 &&
@@ -809,16 +942,75 @@ export function collectPaperTradeOutcomes(
         record.bucketTimeMs <= nowMs,
     )
     .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
-
-  return selectIndependentSignals(records)
-    .map((candidate) => settleSignal(candidate, records))
-    .filter((outcome): outcome is PaperTradeOutcome => outcome !== null)
-    .filter((outcome) => outcomeTimeMs(outcome) >= analyticsWindowStart);
 }
 
-type SignalCandidate = {
+export function collectPaperTradeOutcomes(
+  inputRecords: PaperScanRecord[],
+  nowMs = Date.now(),
+): PaperTradeOutcome[] {
+  const analyticsWindowStart =
+    nowMs - JOURNAL_ANALYTICS_WINDOW_DAYS * ONE_DAY_MS;
+  return buildJournalInputFromRecords(inputRecords, nowMs)
+    .outcomes.filter(
+      (stored) => outcomeTimeMs(stored.outcome) >= analyticsWindowStart,
+    )
+    .map((stored) => stored.outcome);
+}
+
+export type SignalCandidate = {
   record: PaperScanRecord;
   signal: PaperSignalObservation;
+};
+
+/** A scan reduced to the timing and equity the journal reads outside the raw window. */
+export type JournalScanRow = {
+  bucketTimeMs: number;
+  generatedAt: string;
+  portfolioValueUsd: number;
+};
+
+export type JournalQualityRow = DataSourceQualityObservationRow;
+
+/**
+ * A selected signal as the derived store keeps it.
+ *
+ * `sequence` is the position the signal took in the one continuous selection
+ * stream. Loss streaks and drawdowns read outcomes in that order while the
+ * store groups them by day, so the order has to travel with each row instead of
+ * being recovered from the day keys.
+ */
+export type JournalStoredCandidate = {
+  sequence: number;
+  entryBucketTimeMs: number;
+  model: PaperSignalModel;
+  costGatePassed: boolean;
+};
+
+export type JournalStoredOutcome = {
+  sequence: number;
+  entryBucketTimeMs: number;
+  outcome: PaperTradeOutcome;
+};
+
+/**
+ * Everything the journal snapshot is computed from.
+ *
+ * Raw records build one on the full path; the derived store assembles the same
+ * shape from day keys and a cursor. Nothing here needs a price or a signal
+ * list, which is why the raw records only have to reach back far enough to
+ * settle what is still open.
+ */
+export type JournalInput = {
+  /** First scan ever observed, or the window's first scan on the full path. */
+  firstScan: JournalScanRow | null;
+  /** At least the last seven days, and the last 24h for coverage. */
+  scanRows: JournalScanRow[];
+  /** At least the last 24h. */
+  qualityRows: JournalQualityRow[];
+  /** Selected signals over the record window, in stream order. */
+  candidates: JournalStoredCandidate[];
+  /** Settled outcomes over the record window, in stream order. */
+  outcomes: JournalStoredOutcome[];
 };
 
 function signalModel(signal: PaperSignalObservation): PaperSignalModel {
@@ -855,12 +1047,12 @@ function emptyModelPerformance(model: PaperSignalModel): PaperModelPerformance {
 
 function calculateModelPerformance(
   model: PaperSignalModel,
-  candidates: SignalCandidate[],
+  candidates: JournalStoredCandidate[],
   outcomes: PaperTradeOutcome[],
   startingCapital: number,
 ): PaperModelPerformance {
   const scopedCandidates = candidates.filter(
-    ({ signal }) => signalModel(signal) === model,
+    (candidate) => candidate.model === model,
   );
   const scopedOutcomes = outcomes.filter(
     (outcome) => signalModel(outcome) === model,
@@ -902,7 +1094,7 @@ function calculateModelPerformance(
   const maxDrawdownPercent =
     startingCapital > 0 ? (maxDrawdownUsd / startingCapital) * 100 : 0;
   const costGatePassedCount = scopedCandidates.filter(
-    ({ signal }) => signal.costGatePassed,
+    (candidate) => candidate.costGatePassed,
   ).length;
   const costGatePassRate =
     scopedCandidates.length > 0
@@ -1761,30 +1953,120 @@ export function emptyPaperJournal(
   };
 }
 
+export function journalQualityRow(record: PaperScanRecord): JournalQualityRow {
+  return {
+    bucketTimeMs: record.bucketTimeMs,
+    dataSourceQuality: record.dataSourceQuality,
+  };
+}
+
+export function journalScanRow(record: PaperScanRecord): JournalScanRow {
+  return {
+    bucketTimeMs: record.bucketTimeMs,
+    generatedAt: record.generatedAt,
+    portfolioValueUsd: record.portfolioValueUsd,
+  };
+}
+
+/**
+ * Runs the whole selection stream over raw records and returns what the derived
+ * store would have accumulated from them.
+ *
+ * This is the reference path. It reads every record it is given, so the
+ * incremental store is only correct insofar as it reproduces this.
+ */
+export function buildJournalInputFromRecords(
+  inputRecords: PaperScanRecord[],
+  nowMs = Date.now(),
+): JournalInput {
+  const records = retainedJournalRecords(inputRecords, nowMs);
+  const candidates: JournalStoredCandidate[] = [];
+  const outcomes: JournalStoredOutcome[] = [];
+
+  for (const [sequence, candidate] of selectIndependentSignals(
+    records,
+  ).entries()) {
+    const entryBucketTimeMs = candidate.record.bucketTimeMs;
+    candidates.push({
+      sequence,
+      entryBucketTimeMs,
+      model: signalModel(candidate.signal),
+      costGatePassed: candidate.signal.costGatePassed,
+    });
+    const outcome = settleCandidate(settleableCandidate(candidate), records);
+    if (outcome) outcomes.push({ sequence, entryBucketTimeMs, outcome });
+  }
+
+  return {
+    firstScan: records[0] ? journalScanRow(records[0]) : null,
+    scanRows: records.map(journalScanRow),
+    qualityRows: records.map(journalQualityRow),
+    candidates,
+    outcomes,
+  };
+}
+
 export function evaluatePaperJournal(
   inputRecords: PaperScanRecord[],
   nowMs = Date.now(),
 ): PaperJournalSnapshot {
-  const recordWindowStart =
-    nowMs - JOURNAL_RECORD_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
-  const analyticsRecords = inputRecords
-    .filter(
-      (record) =>
-        record.schemaVersion === 1 &&
-        record.executionLocked === true &&
-        record.bucketTimeMs >= recordWindowStart &&
-        record.bucketTimeMs <= nowMs,
-    )
-    .toSorted((left, right) => left.bucketTimeMs - right.bucketTimeMs);
-  const windowStart = nowMs - JOURNAL_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
-  const records = analyticsRecords.filter(
-    (record) => record.bucketTimeMs >= windowStart,
+  return evaluateJournalInput(
+    buildJournalInputFromRecords(inputRecords, nowMs),
+    nowMs,
   );
-  const candidates = selectIndependentSignals(records);
-  const outcomes = candidates
-    .map((candidate) => settleSignal(candidate, records))
-    .filter((outcome): outcome is PaperTradeOutcome => outcome !== null);
-  const allAnalyticsOutcomes = collectPaperTradeOutcomes(analyticsRecords, nowMs);
+}
+
+export function evaluateJournalInput(
+  input: JournalInput,
+  nowMs = Date.now(),
+): PaperJournalSnapshot {
+  const recordWindowStart =
+    nowMs - JOURNAL_RECORD_WINDOW_DAYS * ONE_DAY_MS;
+  const windowStart = nowMs - JOURNAL_WINDOW_DAYS * ONE_DAY_MS;
+  const analyticsWindowStart =
+    nowMs - JOURNAL_ANALYTICS_WINDOW_DAYS * ONE_DAY_MS;
+  const retained = (bucketTimeMs: number) =>
+    bucketTimeMs >= recordWindowStart && bucketTimeMs <= nowMs;
+  const byStreamOrder = (
+    left: { sequence: number },
+    right: { sequence: number },
+  ) => left.sequence - right.sequence;
+  const byBucket = (
+    left: { bucketTimeMs: number },
+    right: { bucketTimeMs: number },
+  ) => left.bucketTimeMs - right.bucketTimeMs;
+
+  const scanRows = input.scanRows
+    .filter((row) => retained(row.bucketTimeMs))
+    .toSorted(byBucket);
+  const qualityRows = input.qualityRows
+    .filter((row) => retained(row.bucketTimeMs))
+    .toSorted(byBucket);
+  const firstScan = input.firstScan ?? scanRows[0] ?? null;
+  const records = scanRows.filter((row) => row.bucketTimeMs >= windowStart);
+
+  /*
+   * The seven-day promotion window is a slice of the same selection stream the
+   * thirty-day analytics read, not a second selection anchored at its own edge.
+   * Re-selecting from that edge would hand the window a cooldown that had never
+   * fired, so a signal overlapping a position opened just before the edge would
+   * count as independent in the window and not in the analytics.
+   */
+  const candidates = input.candidates
+    .filter((candidate) => retained(candidate.entryBucketTimeMs))
+    .toSorted(byStreamOrder);
+  const settled = input.outcomes
+    .filter((stored) => retained(stored.entryBucketTimeMs))
+    .toSorted(byStreamOrder);
+  const windowCandidates = candidates.filter(
+    (candidate) => candidate.entryBucketTimeMs >= windowStart,
+  );
+  const outcomes = settled
+    .filter((stored) => stored.entryBucketTimeMs >= windowStart)
+    .map((stored) => stored.outcome);
+  const allAnalyticsOutcomes = settled
+    .filter((stored) => outcomeTimeMs(stored.outcome) >= analyticsWindowStart)
+    .map((stored) => stored.outcome);
   const analyticsOutcomes = allAnalyticsOutcomes.filter(
     (outcome) => signalModel(outcome) === "chart",
   );
@@ -1793,25 +2075,31 @@ export function evaluatePaperJournal(
   );
   const startingCapital = records[0]?.portfolioValueUsd ?? 0;
   const analyticsStartingCapital =
-    analyticsRecords[0]?.portfolioValueUsd ?? startingCapital;
+    firstScan?.portfolioValueUsd ?? startingCapital;
   const analyticsMetrics = calculateOutcomeMetrics(
     analyticsOutcomes,
     analyticsStartingCapital,
   );
   const chart = calculateModelPerformance(
     "chart",
-    candidates,
+    windowCandidates,
     outcomes,
     startingCapital,
   );
   const communityTrend = calculateModelPerformance(
     "community-trend",
-    candidates,
+    windowCandidates,
     outcomes,
     startingCapital,
   );
-  const operationalReadiness = calculateOperationalReadiness(
-    analyticsRecords,
+  const operationalReadiness = calculateOperationalReadinessFrom(
+    {
+      firstScanMs: firstScan?.bucketTimeMs ?? null,
+      lastScanMs: scanRows.at(-1)?.bucketTimeMs ?? null,
+      recentBucketTimesMs: scanRows
+        .filter((row) => row.bucketTimeMs >= nowMs - ONE_DAY_MS)
+        .map((row) => row.bucketTimeMs),
+    },
     nowMs,
     chart.qualification,
   );
@@ -1838,7 +2126,7 @@ export function evaluatePaperJournal(
     windowDays: JOURNAL_WINDOW_DAYS,
     analyticsWindowDays: JOURNAL_ANALYTICS_WINDOW_DAYS,
     horizonHours: OUTCOME_HORIZON_HOURS,
-    startedAt: analyticsRecords[0]?.generatedAt ?? null,
+    startedAt: firstScan?.generatedAt ?? null,
     lastScanAt: records.at(-1)?.generatedAt ?? null,
     scanCount: records.length,
     signalCount: chart.signalCount,
@@ -1920,11 +2208,11 @@ export function evaluatePaperJournal(
     ),
     performanceTimeline: performanceTimeline(analyticsOutcomes, nowMs),
     dataSourceQualityHistory24h: calculateDataSourceQualityHistory(
-      analyticsRecords,
+      qualityRows,
       nowMs,
     ),
     dataSourceIncidents24h: calculateDataSourceIncidents(
-      analyticsRecords,
+      qualityRows,
       nowMs,
     ),
     dataQualityPerformance: calculateDataQualityPerformance(

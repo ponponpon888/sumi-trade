@@ -8,7 +8,10 @@ import {
 } from "@/lib/chart-model";
 import { getPoolOhlcv } from "@/lib/ohlcv";
 import { normalizeCandles } from "@/lib/indicators";
-import { getPaperJournalSnapshot } from "@/lib/paper-journal";
+import {
+  readPaperJournalContext,
+  type PaperJournalStore,
+} from "@/lib/paper-journal";
 import { assessModelDrifts } from "@/lib/model-drift";
 import { getPortfolioSnapshot } from "@/lib/portfolio";
 import { assessPortfolioRisk } from "@/lib/portfolio-risk";
@@ -159,7 +162,7 @@ export async function getChartModelSnapshot(
   };
 }
 
-export async function getTradingDashboardData(): Promise<{
+export type TradingDashboardData = {
   snapshot: PortfolioSnapshot;
   chartModel: ChartModelSnapshot;
   plan: StrategyPlan;
@@ -167,14 +170,30 @@ export async function getTradingDashboardData(): Promise<{
   journal: PaperJournalSnapshot;
   safetyControl: SafetyControlSnapshot;
   dataSourceQuality: DataSourceQualitySnapshot;
-}> {
+};
+
+/**
+ * Dashboard data plus the journal the snapshot was built from.
+ *
+ * The scan path appends to that journal rather than reading it again, which is
+ * what stopped one scan from costing three passes over storage, so it travels
+ * with the data.
+ */
+export type PaperScanInput = {
+  data: TradingDashboardData;
+  journalStore: PaperJournalStore | null;
+};
+
+export async function getPaperScanInput(): Promise<PaperScanInput> {
   const snapshot = await getPortfolioSnapshot();
-  const [chartModel, rawTrendScout, journal, safetyControl] = await Promise.all([
-    getChartModelSnapshot(snapshot),
-    getTrendScoutSnapshot(snapshot),
-    getPaperJournalSnapshot(snapshot.walletAddress),
-    getSafetyControlSnapshot(),
-  ]);
+  const [chartModel, rawTrendScout, journalContext, safetyControl] =
+    await Promise.all([
+      getChartModelSnapshot(snapshot),
+      getTrendScoutSnapshot(snapshot),
+      readPaperJournalContext(snapshot.walletAddress),
+      getSafetyControlSnapshot(),
+    ]);
+  const journal = journalContext.snapshot;
   const portfolioRisk = applySafetyControlToRisk(
     assessPortfolioRisk(snapshot, chartModel, journal),
     safetyControl,
@@ -194,12 +213,19 @@ export async function getTradingDashboardData(): Promise<{
   );
   const dataSourceQuality = assessDataSourceQuality(snapshot, chartModel);
   return {
-    snapshot,
-    chartModel,
-    plan,
-    trendScout,
-    journal,
-    safetyControl,
-    dataSourceQuality,
+    data: {
+      snapshot,
+      chartModel,
+      plan,
+      trendScout,
+      journal,
+      safetyControl,
+      dataSourceQuality,
+    },
+    journalStore: journalContext.store,
   };
+}
+
+export async function getTradingDashboardData(): Promise<TradingDashboardData> {
+  return (await getPaperScanInput()).data;
 }

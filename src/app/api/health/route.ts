@@ -2,7 +2,7 @@ import { BUILD_VERSION } from "@/lib/build-version";
 import { getDashboardAccess } from "@/lib/dashboard-auth";
 import { getPaperEngineHealth } from "@/lib/paper-engine-health";
 import {
-  getPaperJournalSnapshot,
+  getPaperJournalHealth,
   isPaperJournalConfigured,
 } from "@/lib/paper-journal";
 import { getSafetyControlSnapshot } from "@/lib/safety-control";
@@ -39,10 +39,16 @@ export async function GET(request: Request) {
     );
   }
 
+  /**
+   * The journal read here is the health one, not the dashboard one. Health
+   * reports scan freshness, the readiness gate and the 24h source statistics,
+   * all of which come from the derived store, so it never touches the raw
+   * records the six-hour scoring needs.
+   */
   const walletAddress = process.env.WALLET_ADDRESS?.trim();
   const [safety, journal] = await Promise.all([
     getSafetyControlSnapshot(),
-    walletAddress ? getPaperJournalSnapshot(walletAddress) : Promise.resolve(null),
+    walletAddress ? getPaperJournalHealth(walletAddress) : Promise.resolve(null),
   ]);
   const nowMs = Date.now();
   const runtimeConfiguration = auditRuntimeConfiguration();

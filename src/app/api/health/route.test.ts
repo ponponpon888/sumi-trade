@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/health/route";
 import { emptyPaperJournal } from "@/lib/paper-journal-core";
-import { getPaperJournalSnapshot } from "@/lib/paper-journal";
+import { getPaperJournalHealth } from "@/lib/paper-journal";
 import { calculateDataSourceQualityHistory } from "@/lib/data-source-quality";
 import packageJson from "../../../../package.json";
 
 vi.mock("@/lib/paper-journal", () => ({
-  getPaperJournalSnapshot: vi.fn(), isPaperJournalConfigured: () => true,
+  getPaperJournalHealth: vi.fn(), isPaperJournalConfigured: () => true,
 }));
 vi.mock("@/lib/safety-control", () => ({
   getSafetyControlSnapshot: async () => ({ emergencyStop: false, status: "ready" }),
@@ -32,7 +32,7 @@ describe("health source monitoring", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv("WALLET_ADDRESS", "private-wallet");
-    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(emptyPaperJournal("disabled", "test"));
+    vi.mocked(getPaperJournalHealth).mockResolvedValue(emptyPaperJournal("disabled", "test"));
   });
   afterEach(() => vi.unstubAllEnvs());
 
@@ -50,7 +50,7 @@ describe("health source monitoring", () => {
     const journal = emptyPaperJournal("disabled", "test");
     journal.dataSourceQualityHistory24h = [];
     journal.dataSourceIncidents24h = [];
-    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(journal);
+    vi.mocked(getPaperJournalHealth).mockResolvedValue(journal);
     const response = await GET(healthRequest());
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toMatchObject({
@@ -67,7 +67,7 @@ describe("health source monitoring", () => {
     for (const item of history) item.status = "healthy";
     history[0].status = status;
     journal.dataSourceQualityHistory24h = history;
-    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(journal);
+    vi.mocked(getPaperJournalHealth).mockResolvedValue(journal);
     const body = await (await GET(healthRequest())).json();
     expect(body.dataSourceQualityStatus).toBe(status);
     for (const state of ["stale", "degraded", "collecting"]) {
@@ -89,7 +89,7 @@ describe("health source monitoring", () => {
     history[0].averageCoveragePercent = 0;
     history[0].currentFailureStreak = 288;
     journal.dataSourceQualityHistory24h = history;
-    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(journal);
+    vi.mocked(getPaperJournalHealth).mockResolvedValue(journal);
     const body = await (await GET(healthRequest())).json();
     expect(body.dataSourceQuality24h).toHaveLength(history.length);
     expect(body.dataSourceQuality24h[0]).toMatchObject({
@@ -110,7 +110,7 @@ describe("health source monitoring", () => {
     history[0].status = "stale";
     history[1].status = "degraded";
     journal.dataSourceQualityHistory24h = history;
-    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(journal);
+    vi.mocked(getPaperJournalHealth).mockResolvedValue(journal);
     expect(await (await GET(healthRequest())).json()).toMatchObject({
       dataSourceQualityStatus: "stale", staleDataSources: [history[0].source],
       degradedDataSources: [history[1].source], collectingDataSources: history.slice(2).map((item) => item.source),
@@ -120,7 +120,7 @@ describe("health source monitoring", () => {
   it("returns collecting without reading a journal when no wallet is configured", async () => {
     vi.stubEnv("WALLET_ADDRESS", "");
     expect(await (await GET(healthRequest())).json()).toMatchObject({ dataSourceQualityStatus: "collecting" });
-    expect(getPaperJournalSnapshot).not.toHaveBeenCalled();
+    expect(getPaperJournalHealth).not.toHaveBeenCalled();
   });
 });
 
@@ -158,7 +158,7 @@ describe("health public surface on Vercel", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv("WALLET_ADDRESS", "private-wallet");
-    vi.mocked(getPaperJournalSnapshot).mockResolvedValue(
+    vi.mocked(getPaperJournalHealth).mockResolvedValue(
       emptyPaperJournal("disabled", "test"),
     );
     vi.stubEnv("VERCEL", "1");
@@ -180,7 +180,7 @@ describe("health public surface on Vercel", () => {
 
   it("does not read the journal or the safety flag without credentials", async () => {
     await GET(healthRequest());
-    expect(getPaperJournalSnapshot).not.toHaveBeenCalled();
+    expect(getPaperJournalHealth).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -206,7 +206,7 @@ describe("health public surface on Vercel", () => {
       mode: "paper",
       executionLocked: true,
     });
-    expect(getPaperJournalSnapshot).toHaveBeenCalled();
+    expect(getPaperJournalHealth).toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain("private-wallet");
   });
 
@@ -218,6 +218,6 @@ describe("health public surface on Vercel", () => {
     );
     expect(response.status).toBe(503);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
-    expect(getPaperJournalSnapshot).not.toHaveBeenCalled();
+    expect(getPaperJournalHealth).not.toHaveBeenCalled();
   });
 });

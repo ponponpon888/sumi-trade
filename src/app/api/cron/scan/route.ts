@@ -1,6 +1,6 @@
 import { isCronAuthorized } from "@/lib/cron-auth";
 import { recordPaperScan } from "@/lib/paper-journal";
-import { getTradingDashboardData } from "@/lib/trading-engine";
+import { getPaperScanInput } from "@/lib/trading-engine";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +26,8 @@ export async function GET(request: Request) {
   console.info("[paper.scan.cron] started", { startedAt, schedule });
 
   try {
-    const data = await getTradingDashboardData();
-    const journal = await recordPaperScan(data);
+    const { data, journalStore } = await getPaperScanInput();
+    const journal = await recordPaperScan(data, Date.now(), journalStore);
 
     if (journal.status === "disabled" || journal.status === "error") {
       console.error("[paper.scan.cron] journal write failed", {
