@@ -984,6 +984,8 @@ export type JournalStoredCandidate = {
   entryBucketTimeMs: number;
   model: PaperSignalModel;
   costGatePassed: boolean;
+  /** Which decision was selected. Absent on signals saved before ids. */
+  decisionId?: string;
 };
 
 export type JournalStoredOutcome = {
@@ -1992,6 +1994,9 @@ export function buildJournalInputFromRecords(
       entryBucketTimeMs,
       model: signalModel(candidate.signal),
       costGatePassed: candidate.signal.costGatePassed,
+      ...(candidate.signal.decisionId
+        ? { decisionId: candidate.signal.decisionId }
+        : {}),
     });
     const outcome = settleCandidate(settleableCandidate(candidate), records);
     if (outcome) outcomes.push({ sequence, entryBucketTimeMs, outcome });

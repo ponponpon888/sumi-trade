@@ -125,6 +125,9 @@ export function advanceJournal(
       entryBucketTimeMs: candidate.record.bucketTimeMs,
       model: candidate.signal.model ?? "chart",
       costGatePassed: candidate.signal.costGatePassed,
+      ...(candidate.signal.decisionId
+        ? { decisionId: candidate.signal.decisionId }
+        : {}),
     });
     open.push({ sequence, ...settleableCandidate(candidate) });
   }

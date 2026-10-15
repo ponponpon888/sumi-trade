@@ -183,18 +183,21 @@ describe("incremental journal equivalence", () => {
     expect(store.candidates.length).toBeGreaterThan(20);
   });
 
-  it("selects the same signals the one-pass selection does", () => {
-    const onePass = selectIndependentSignals(records).map((candidate) => ({
-      entryBucketTimeMs: candidate.record.bucketTimeMs,
-      decisionId: candidate.signal.decisionId,
-    }));
-    const incremental = store.candidates.map((candidate) => ({
-      entryBucketTimeMs: candidate.entryBucketTimeMs,
-      decisionId: `${new Date(candidate.entryBucketTimeMs)
-        .toISOString()
-        .replace(/[:.]/g, "-")}:chart:TEST:BUY`,
-    }));
+  /**
+   * The same set again, against the one-pass selection rather than against the
+   * reference store, and compared on the decision ids the stream recorded
+   * rather than on anything rebuilt from the bucket.
+   */
+  it("selects the same decisions the one-pass selection does", () => {
+    const onePass = selectIndependentSignals(records).map(
+      (candidate) => candidate.signal.decisionId,
+    );
+    const incremental = store.candidates.map(
+      (candidate) => candidate.decisionId,
+    );
+
     expect(incremental).toEqual(onePass);
+    expect(onePass.every((id) => typeof id === "string")).toBe(true);
   });
 
   it("scores the same outcomes as a full replay", () => {
